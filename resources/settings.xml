@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+	<category label="30001">
+		<setting label="30002" type="lsep"/>
+		<!-- <setting id="username" type="text" label="32003" default=""/> -->
+		<!-- <setting id="password" type="text" label="32004" default=""/> -->
+		<!-- <setting id="login" type="bool" label="32005" default="true"/> -->
+		<setting label="30003" type="action" action="RunPlugin(plugin://plugin.audio.music163/login/)"/>
+		<setting label="30004" type="action" action="RunPlugin(plugin://plugin.audio.music163/qrcode_login/)"/>
+		<setting label="30005" type="action" action="RunPlugin(plugin://plugin.audio.music163/logout/)"/>
+
+		<setting label="30006" type="lsep"/>
+		<setting id="host" type="text" label="30007" default=""/>
+		<setting id="port" type="text" label="30008" default=""/>
+		<setting id="enable_proxy" type="bool" label="30009" default="false" />
+	</category>
+	<category label="30010">
+		<setting label="30011" type="lsep"/>
+		<setting id="number_of_songs_per_page" type="number" label="30012" default="1000"/>
+		<setting id="show_index" type="bool" label="30013" default="false"/>
+		<setting id="mvfirst" type="bool" label="30014" default="true"/>
+		<setting id="quality" type="select" label="30015" lvalues="30016|30017|30018|30019|30020|30021|30022|30023|30100" />
+		<setting id="resolution" type="select" label="30024" lvalues="30025|30026|30027|30028" />
+		<setting id="song_naming_format" type="select" label="30029" lvalues="30030|30031|30032" />
+		<setting id="reverse_radio" type="bool" label="30033" default="false" />
+		<setting id="auto_play_mv" type="bool" label="30034" default="false" />
+		<setting id="hide_songs" type="bool" label="30035" default="true" />
+		<setting id="hide_cover_songs" type="bool" label="30036" default="false" />
+		<setting id="show_album_name" type="bool" label="30037" default="false" />
+		<setting id="upload_play_record" type="bool" label="30038" default="true" />
+		<setting label="30039" type="action" action="RunPlugin(plugin://plugin.audio.music163/delete_thumbnails/)"/>
+	</category>
+	<category label="30040">
+		<setting label="30041" type="lsep"/>
+		<setting id="rank" type="bool" label="30042" default="true"/>
+		<setting id="top_artist" type="bool" label="30043" default="true"/>
+		<setting id="daily_recommend" type="bool" label="30044" default="true"/>
+		<setting id="personal_fm" type="bool" label="30045" default="true"/>
+		<setting id="my_playlists" type="bool" label="30046" default="true"/>
+		<setting id="recommend_playlists" type="bool" label="30047" default="true"/>
+		<setting id="hot_playlists" type="bool" label="30067" default="true"/>
+		<setting id="sublist" type="bool" label="30048" default="true"/>
+		<setting id="search" type="bool" label="30049" default="true"/>
+		<setting id="cloud_disk" type="bool" label="30050" default="true"/>
+		<setting id="new_albums" type="bool" label="30051" default="true"/>
+		<setting id="new_songs" type="bool" label="30052" default="true"/>
+		<setting id="home_page" type="bool" label="30053" default="true"/>
+		<setting id="top_mv" type="bool" label="30054" default="true"/>
+		<setting id="mlog" type="bool" label="30055" default="true"/>
+		<setting id="vip_timemachine" type="bool" label="30056" default="true"/>
+		<!-- TuneHub integration toggles -->
+		<setting id="tunehub_search" type="bool" label="TuneHub: 单平台搜索" default="true"/>
+		<setting id="tunehub_aggregate_search" type="bool" label="TuneHub: 聚合搜索" default="true"/>
+		<setting id="tunehub_playlist" type="bool" label="TuneHub: 歌单" default="true"/>
+		<setting id="tunehub_toplists" type="bool" label="TuneHub: 排行榜" default="true"/>
+	</category>
+
+	<category label="30057">
+		<setting label="30058" type="lsep"/>
+		<setting id="mv_tag" type="bool" label="30059" default="true" />
+		<setting id="vip_tag" type="bool" label="30060" default="true"/>
+		<setting id="cloud_tag" type="bool" label="30061" default="true"/>
+		<setting id="exclusive_tag" type="bool" label="30062" default="true"/>
+		<setting id="sq_tag" type="bool" label="30063" default="true"/>
+		<setting id="pay_tag" type="bool" label="30064" default="true"/>
+		<setting id="presell_tag" type="bool" label="30065" default="true"/>
+		<setting id="like_tag" type="bool" label="30066" default="true"/>
+	</category>
+
+</settings>
