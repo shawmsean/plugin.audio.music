@@ -899,9 +899,9 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
 # 主目录
 @plugin.route('/')
 def index():
-    if account['first_run']:
-        account['first_run'] = False
-        xbmcgui.Dialog().ok('使用提示', '在设置中登录账号以解锁更多功能')
+    # if account['first_run']:
+    #     account['first_run'] = False
+    #     xbmcgui.Dialog().ok('使用提示', '在设置中登录账号以解锁更多功能')
     items = []
     status = account['logined']
 
@@ -1347,6 +1347,9 @@ def play_recommend_songs(song_id, mv_id, dt):
     if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
         music.daka(song_id, time=dt)
 
+
+  
+
 @plugin.route('/play_playlist_songs/<playlist_id>/<song_id>/<mv_id>/<dt>/')
 def play_playlist_songs(playlist_id, song_id, mv_id, dt):
     # 获取歌单详情
@@ -1423,6 +1426,7 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
     # 上传播放记录
     if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
         music.daka(song_id, time=dt)
+    
 
 
 # 历史日推
@@ -2475,14 +2479,23 @@ def personal_fm():
 
 @plugin.route('/tunehub_search/')
 def tunehub_search():
-    platforms = ['netease', 'qq', 'kuwo']
-    choices = ['网易云 (netease)', 'QQ 音乐 (qq)', '酷我 (kuwo)']
-    dialog = xbmcgui.Dialog()
-    idx = dialog.select('选择平台', choices)
-    if idx < 0:
-        return
-    source = platforms[idx]
+    # 显示三个平台文件夹
+    platforms = [
+        {'source': 'netease', 'name': '网易云搜索'},
+        {'source': 'qq', 'name': 'QQ音乐搜索'},
+        {'source': 'kuwo', 'name': '酷我搜索'}
+    ]
+    items = []
+    for platform in platforms:
+        items.append({
+            'label': platform['name'],
+            'path': plugin.url_for('tunehub_search_platform', source=platform['source']),
+            'is_playable': False,
+        })
+    return items
 
+@plugin.route('/tunehub_search_platform/<source>/')
+def tunehub_search_platform(source):
     keyboard = xbmc.Keyboard('', '请输入搜索关键词')
     keyboard.doModal()
     if not keyboard.isConfirmed():
@@ -2511,9 +2524,10 @@ def tunehub_search():
         if pic:
             item['thumbnail'] = pic
             item['icon'] = pic
+            item['fanart'] = pic
         items.append(item)
     if not items:
-        dialog.notification('TuneHub', '未找到结果', xbmcgui.NOTIFICATION_INFO, 800, False)
+        xbmcgui.Dialog().notification('TuneHub', '未找到结果', xbmcgui.NOTIFICATION_INFO, 800, False)
     return items
 
 
@@ -2550,6 +2564,7 @@ def tunehub_aggregate_search():
             if pic:
                 item['thumbnail'] = pic
                 item['icon'] = pic
+                item['fanart'] = pic
             items.append(item)
         else:
             url = it.get('url')
@@ -2568,14 +2583,23 @@ def tunehub_aggregate_search():
 
 @plugin.route('/tunehub_playlist/')
 def tunehub_playlist():
-    platforms = ['netease', 'qq', 'kuwo']
-    choices = ['网易云 (netease)', 'QQ 音乐 (qq)', '酷我 (kuwo)']
-    dialog = xbmcgui.Dialog()
-    idx = dialog.select('选择平台', choices)
-    if idx < 0:
-        return
-    source = platforms[idx]
+    # 显示三个平台文件夹
+    platforms = [
+        {'source': 'netease', 'name': '网易云歌单'},
+        {'source': 'qq', 'name': 'QQ音乐歌单'},
+        {'source': 'kuwo', 'name': '酷我歌单'}
+    ]
+    items = []
+    for platform in platforms:
+        items.append({
+            'label': platform['name'],
+            'path': plugin.url_for('tunehub_playlist_platform', source=platform['source']),
+            'is_playable': False,
+        })
+    return items
 
+@plugin.route('/tunehub_playlist_platform/<source>/')
+def tunehub_playlist_platform(source):
     keyboard = xbmc.Keyboard('', '请输入歌单 ID')
     keyboard.doModal()
     if not keyboard.isConfirmed():
@@ -2605,21 +2629,29 @@ def tunehub_playlist():
 
 @plugin.route('/tunehub_toplists/')
 def tunehub_toplists():
-    # 让用户选择平台（网易云 / QQ / 酷我），这些平台必须传入 `source`
-    platforms = ['netease', 'qq', 'kuwo']
-    choices = ['网易云 (netease)', 'QQ 音乐 (qq)', '酷我 (kuwo)']
-    dialog = xbmcgui.Dialog()
-    idx = dialog.select('选择平台', choices)
-    if idx < 0:
-        return
-    source = platforms[idx]
+    # 显示三个平台文件夹
+    platforms = [
+        {'source': 'netease', 'name': '网易云排行榜'},
+        {'source': 'qq', 'name': 'QQ音乐排行榜'},
+        {'source': 'kuwo', 'name': '酷我排行榜'}
+    ]
+    items = []
+    for platform in platforms:
+        items.append({
+            'label': platform['name'],
+            'path': plugin.url_for('tunehub_toplists_platform', source=platform['source']),
+            'is_playable': False,
+        })
+    return items
 
-    # `type` 对应 TuneHub API 的请求类型，使用 'toplists'
+@plugin.route('/tunehub_toplists_platform/<source>/')
+def tunehub_toplists_platform(source):
+    # 显示特定平台的排行榜
     resp = music.tunehub_toplists(source=source, type='toplists')
     data = resp.get('data') if isinstance(resp, dict) else resp
     # Debug: log raw resp summary to help diagnose platform/source issues
     try:
-        xbmc.log("plugin.audio.music: tunehub_toplists called with user_source=%s resp_type=%s resp_keys=%s" % (
+        xbmc.log("plugin.audio.music: tunehub_toplists_platform called with source=%s resp_type=%s resp_keys=%s" % (
             str(source), str(type(resp)), str(list(resp.keys()) if isinstance(resp, dict) else 'N/A')), xbmc.LOGDEBUG)
     except Exception:
         pass
@@ -2641,7 +2673,7 @@ def tunehub_toplists():
     except Exception:
         common_source = None
     try:
-        xbmc.log("plugin.audio.music: tunehub_toplists common_source=%s (user_selected=%s)" % (str(common_source), str(source)), xbmc.LOGDEBUG)
+        xbmc.log("plugin.audio.music: tunehub_toplists_platform common_source=%s (user_selected=%s)" % (str(common_source), str(source)), xbmc.LOGDEBUG)
     except Exception:
         pass
 
@@ -2650,14 +2682,19 @@ def tunehub_toplists():
         pid = l.get('id')
         item_platform = l.get('platform')
         item_source_field = l.get('source')
-        item_source = item_platform or item_source_field or common_source or 'netease'
+        item_source = item_platform or item_source_field or common_source or source
         try:
-            xbmc.log("plugin.audio.music: tunehub_toplists item id=%s platform=%s source_field=%s resolved_source=%s" % (
+            xbmc.log("plugin.audio.music: tunehub_toplists_platform item id=%s platform=%s source_field=%s resolved_source=%s" % (
                 str(pid), str(item_platform), str(item_source_field), str(item_source)), xbmc.LOGDEBUG)
         except Exception:
             pass
         if pid:
-            items.append({'label': title, 'path': plugin.url_for('tunehub_toplist', source=item_source, id=pid)})
+            pic = l.get('pic') or l.get('picUrl') or l.get('cover') or ''
+            item = {'label': title, 'path': plugin.url_for('tunehub_toplist', source=item_source, id=pid)}
+            if pic:
+                item['icon'] = pic
+                item['thumbnail'] = pic
+            items.append(item)
     if not items:
         xbmcgui.Dialog().notification('TuneHub', '未找到排行榜', xbmcgui.NOTIFICATION_INFO, 800, False)
     return items
@@ -2715,6 +2752,7 @@ def tunehub_toplist(source, id):
         if pic:
             item['thumbnail'] = pic
             item['icon'] = pic
+            item['fanart'] = pic
 
         items.append(item)
     if not items:
