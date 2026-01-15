@@ -2995,18 +2995,18 @@ def tunehub_toplist(source , id):
         # -------------------------
         # 4. 构建 item
         # -------------------------
-        # if pid:
-        #     path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
-        #     is_playable = False
-        # else:
-        #     path = url
-        #     is_playable = True
+        if pid:
+            path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
+            is_playable = True
+        else:
+            path = url
+            is_playable = True
         # is_playable = True
         # path = url
         item = {
             "label": label,
             "path": url,
-            "is_playable": True,
+            "is_playable": is_playable,
             "thumbnail": pic,
             "icon": pic,
             "fanart": pic,
@@ -3040,8 +3040,61 @@ def tunehub_toplist(source , id):
     return items
 
 
+# @plugin.route('/tunehub_play/<source>/<id>/<br>/')
+# def tunehub_play(source, id, br='320k'):
+#     try:
+#         resp = music.tunehub_url(id, br=br, source=source)
+#     except Exception:
+#         resp = {}
+
+#     url = None
+#     if isinstance(resp, dict):
+#         url = resp.get("url") or (resp.get("data") or {}).get("url")
+#     elif isinstance(resp, str):
+#         url = resp
+
+#     if not url:
+#         xbmcgui.Dialog().notification("TuneHub", "无法获取播放地址", xbmcgui.NOTIFICATION_INFO, 2000)
+#         return []
+
+#     # 获取元数据
+#     title = None
+#     artist = None
+#     album = None
+#     pic = None
+
+#     try:
+#         info_resp = music.tunehub_info(source, id)
+#         data = info_resp.get("data") if isinstance(info_resp, dict) else info_resp
+#         if isinstance(data, dict):
+#             title = data.get("name") or data.get("title")
+#             artist = data.get("artist") or data.get("artistName")
+#             album = data.get("album") or data.get("albumName")
+#             pic = data.get("pic") or data.get("picUrl") or data.get("cover")
+#     except:
+#         pass
+
+#     # 返回可播放媒体项（关键）
+#     return [{
+#         "label": title or "",
+#         "path": url,
+#         "is_playable": True,
+#         "thumbnail": pic,
+#         "icon": pic,
+#         "fanart": pic,
+#         "info": {
+#             "title": title,
+#             "artist": artist,
+#             "album": album,
+#             "mediatype": "song"
+#         }
+#     }]
+
 @plugin.route('/tunehub_play/<source>/<id>/<br>/')
 def tunehub_play(source, id, br='320k'):
+ 
+
+    # 1. 获取真实播放 URL
     try:
         resp = music.tunehub_url(id, br=br, source=source)
     except Exception:
@@ -3055,9 +3108,9 @@ def tunehub_play(source, id, br='320k'):
 
     if not url:
         xbmcgui.Dialog().notification("TuneHub", "无法获取播放地址", xbmcgui.NOTIFICATION_INFO, 2000)
-        return []
+        return
 
-    # 获取元数据
+    # 2. 获取元数据（可选）
     title = None
     artist = None
     album = None
@@ -3074,22 +3127,21 @@ def tunehub_play(source, id, br='320k'):
     except:
         pass
 
-    # 返回可播放媒体项（关键）
-    return [{
-        "label": title or "",
-        "path": url,
-        "is_playable": True,
-        "thumbnail": pic,
-        "icon": pic,
-        "fanart": pic,
-        "info": {
-            "title": title,
-            "artist": artist,
-            "album": album,
-            "mediatype": "song"
-        }
-    }]
+    # 3. 构建 ListItem（与 play_playlist_songs 完全一致）
+    li = xbmcgui.ListItem(label=title or "")
+    tag = li.getMusicInfoTag()
+    if title:
+        tag.setTitle(title)
+    if artist:
+        tag.setArtist(artist)
+    if album:
+        tag.setAlbum(album)
 
+    if pic:
+        li.setArt({"icon": pic, "thumbnail": pic, "fanart": pic})
+
+    # 4. 直接播放真实 URL（与 play_playlist_songs 的 play 路由一致）
+    xbmc.Player().play(url, li)
 
 
 
