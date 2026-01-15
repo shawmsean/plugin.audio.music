@@ -568,7 +568,44 @@ class NetEase(object):
         return self.tunehub_api(source=source, id=id, type='pic')
 
     def tunehub_lrc(self, source, id):
-        return self.tunehub_api(source=source, id=id, type='lrc')
+        """Get lyrics from TuneHub API, handling direct LRC text response."""
+        try:
+            params = {'source': source, 'id': id, 'type': 'lrc'}
+            headers_for_tunehub = dict(self.header or {})
+            try:
+                host = urlparse(TUNEHUB_API).netloc
+                if host:
+                    headers_for_tunehub['Host'] = host
+                    headers_for_tunehub['Referer'] = 'https://' + host + '/'
+            except Exception:
+                pass
+            if not self.enable_proxy:
+                resp = self.session.get(TUNEHUB_API, params=params, headers=headers_for_tunehub, timeout=DEFAULT_TIMEOUT)
+            else:
+                resp = self.session.get(TUNEHUB_API, params=params, headers=headers_for_tunehub, timeout=DEFAULT_TIMEOUT, proxies=self.proxies, verify=False)
+
+            xbmc.log("plugin.audio.music: tunehub_lrc params={} status={} url={}".format(params, getattr(resp, 'status_code', 'N/A'), getattr(resp, 'url', 'N/A')), xbmc.LOGDEBUG)
+
+            # Try to parse as JSON first
+            try:
+                data = resp.json()
+                xbmc.log("plugin.audio.music: tunehub_lrc response keys={}".format(list(data.keys()) if isinstance(data, dict) else type(data)), xbmc.LOGDEBUG)
+                return data
+            except ValueError:
+                # Not JSON, treat as direct LRC text response
+                text = resp.text.strip()
+                xbmc.log("plugin.audio.music: tunehub_lrc treating as direct LRC text, length={}".format(len(text)), xbmc.LOGDEBUG)
+
+                # Return in expected format - check if it looks like LRC content
+                if text and ('[' in text or ']' in text):
+                    # Return as dict with 'lrc' key to match expected format
+                    return {'lrc': text, 'source': 'tunehub'}
+                else:
+                    # Empty or invalid response
+                    return {}
+        except Exception as e:
+            xbmc.log("plugin.audio.music: tunehub_lrc failed: {}".format(e), xbmc.LOGERROR)
+            return {}
 
     def tunehub_search(self, source, keyword, limit=20, page=1):
         resp = self.tunehub_api(source=source, type='search', keyword=keyword, limit=limit, page=page)

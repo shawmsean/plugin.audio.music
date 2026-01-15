@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 from api import NetEase
 from xbmcswift2 import Plugin, xbmcgui, xbmcplugin, xbmc, xbmcaddon # type: ignore
+import sqlite3
 import re
 import sys
 import hashlib
@@ -2574,6 +2575,7 @@ def tunehub_aggregate_search():
                 if pic:
                     item['thumbnail'] = pic
                     item['icon'] = pic
+                    item['fanart'] = pic
                 items.append(item)
 
     if not items:
@@ -2700,69 +2702,346 @@ def tunehub_toplists_platform(source):
     return items
 
 
-@plugin.route('/tunehub_toplist/<source>/<id>/')
-def tunehub_toplist(source, id):
-    resp = music.tunehub_toplist(source, id)
-    data = resp.get('data') if isinstance(resp, dict) else resp
-    tracks = []
-    if isinstance(data, dict):
-        tracks = data.get('tracks') or data.get('list') or data.get('data') or []
-    elif isinstance(data, list):
-        tracks = data
+
+def get_db():
+    addon_data = xbmcvfs.translatePath(plugin.addon.getAddonInfo("profile"))
+    if not xbmcvfs.exists(addon_data):
+        xbmcvfs.mkdirs(addon_data)
+    db_path = os.path.join(addon_data, "cache.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS lrc_cache (
+            source TEXT,
+            track_id TEXT,
+            text TEXT,
+            time INTEGER,
+            last_access INTEGER,
+            PRIMARY KEY (source, track_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cover_cache (
+            url TEXT PRIMARY KEY,
+            local_path TEXT,
+            time INTEGER
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+# =========================
+# 歌词缓存（SQLite + LRU）
+# =========================
+
+def get_lrc_sqlite(source, track_id, ttl=86400, max_items=500):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT text, time FROM lrc_cache WHERE source=? AND track_id=?", (source, track_id))
+    row = cur.fetchone()
+
+    # 命中缓存且未过期
+    if row:
+        text, t = row
+        if time.time() - t < ttl:
+            cur.execute(
+                "UPDATE lrc_cache SET last_access=? WHERE source=? AND track_id=?",
+                (int(time.time()), source, track_id)
+            )
+            conn.commit()
+            return text
+
+    # 调用 API 获取歌词
+    try:
+        resp = music.tunehub_api(source=source, id=track_id, type="lrc")
+        text = resp.get("data") or ""
+    except Exception:
+        text = ""
+
+    now = int(time.time())
+    cur.execute(
+        "REPLACE INTO lrc_cache (source, track_id, text, time, last_access) VALUES (?, ?, ?, ?, ?)",
+        (source, track_id, text, now, now)
+    )
+    conn.commit()
+
+    # LRU 清理
+    _cleanup_lrc_sqlite(conn, max_items)
+
+    return text
+
+
+def _cleanup_lrc_sqlite(conn, max_items):
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM lrc_cache")
+    count = cur.fetchone()[0]
+    if count <= max_items:
+        return
+
+    # 删除最久未访问的
+    to_delete = count - max_items
+    cur.execute(
+        "SELECT source, track_id FROM lrc_cache ORDER BY last_access ASC LIMIT ?",
+        (to_delete,)
+    )
+    rows = cur.fetchall()
+    for source, track_id in rows:
+        cur.execute("DELETE FROM lrc_cache WHERE source=? AND track_id=?", (source, track_id))
+    conn.commit()
+
+
+# =========================
+# 封面缓存（本地文件 + 清理）
+# =========================
+
+def get_cached_cover(url, max_size_mb=200, max_files=2000):
+    if not url:
+        return ""
+
+    addon_data = xbmcvfs.translatePath(plugin.addon.getAddonInfo("profile"))
+    cover_dir = os.path.join(addon_data, "covers")
+    if not xbmcvfs.exists(cover_dir):
+        xbmcvfs.mkdirs(cover_dir)
+
+    filename = hashlib.md5(url.encode("utf-8")).hexdigest() + ".jpg"
+    local_path = os.path.join(cover_dir, filename)
+
+    # 已缓存
+    if xbmcvfs.exists(local_path):
+        return local_path
+
+    # 下载封面
+    try:
+        import requests
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            with xbmcvfs.File(local_path, "wb") as f:
+                f.write(r.content)
+        else:
+            return url
+    except Exception:
+        return url
+
+    # 清理缓存
+    _cleanup_cover_cache(cover_dir, max_size_mb, max_files)
+
+    return local_path
+
+
+def _cleanup_cover_cache(cover_dir, max_size_mb, max_files):
+    import glob
+
+    files = glob.glob(os.path.join(cover_dir, "*.jpg"))
+    if not files:
+        return
+
+    file_info = []
+    total_size = 0
+
+    for f in files:
+        stat = xbmcvfs.Stat(f)
+        size = stat.st_size()
+        mtime = stat.st_mtime()
+        total_size += size
+        file_info.append((f, size, mtime))
+
+    # 按时间排序（旧 → 新）
+    file_info.sort(key=lambda x: x[2])
+
+    # 按数量清理
+    while len(file_info) > max_files:
+        f, size, _ = file_info.pop(0)
+        xbmcvfs.delete(f)
+        total_size -= size
+
+    # 按总大小清理
+    max_bytes = max_size_mb * 1024 * 1024
+    while total_size > max_bytes and file_info:
+        f, size, _ = file_info.pop(0)
+        xbmcvfs.delete(f)
+        total_size -= size
+
+
+# =========================
+# 收藏夹（本地 storage）
+# =========================
+
+@plugin.route('/favorite_toggle/<source>/<id>/<name>/<artist>/')
+def favorite_toggle(source, id, name, artist):
+    storage = plugin.get_storage()
+    favs = storage.get("favorites", [])
+
+    exists = next((f for f in favs if f["id"] == id and f["source"] == source), None)
+
+    if exists:
+        favs = [f for f in favs if not (f["id"] == id and f["source"] == source)]
+        xbmcgui.Dialog().notification("收藏夹", "已取消收藏：%s" % name, xbmcgui.NOTIFICATION_INFO, 2000)
+    else:
+        favs.append({
+            "id": id,
+            "source": source,
+            "name": name,
+            "artist": artist,
+            "time": time.time()
+        })
+        xbmcgui.Dialog().notification("收藏夹", "已加入收藏：%s" % name, xbmcgui.NOTIFICATION_INFO, 2000)
+
+    storage["favorites"] = favs
+
+    # 关键修复：不要使用 referrer
+    return []
+
+
+
+@plugin.route('/favorites/')
+def favorites():
+    storage = plugin.get_storage()
+    favs = storage.get("favorites", [])
 
     items = []
-    # 为了加快榜单打开速度，避免在构建列表时同步请求每首歌的 info
-    # 只使用条目中已有的字段（name/artist/artists/pic），播放时再去调用 info 接口获取完整元数据
-    for t in tracks:
-        name = t.get('name') or t.get('title') or ''
-        # 优先使用简单字段，支持 artists 列表或字符串
-        artist = ''
-        if t.get('artist'):
-            artist = t.get('artist')
-        elif t.get('artistName'):
-            artist = t.get('artistName')
-        elif isinstance(t.get('artists'), list) and len(t.get('artists')) > 0:
-            # artists 可能为 dict 列表或字符串列表
-            artist_list = []
-            for a in t.get('artists'):
-                if isinstance(a, dict):
-                    name_a = a.get('name') or a.get('artistName') or ''
-                    if name_a:
-                        artist_list.append(name_a)
-                elif isinstance(a, str):
-                    artist_list.append(a)
-            if artist_list:
-                artist = '/'.join(artist_list)
+    for f in favs:
+        label = u"%s - %s [%s]" % (f["name"], f["artist"], f["source"])
+        items.append({
+            "label": label,
+            "path": plugin.url_for("tunehub_play", source=f["source"], id=f["id"], br="320k"),
+            "is_playable": False,
+            "context_menu": [
+                (
+                    "取消收藏",
+                    'RunPlugin(%s)' % plugin.url_for(
+                        "favorite_toggle",
+                        source=f["source"],
+                        id=f["id"],
+                        name=f["name"],
+                        artist=f["artist"]
+                    )
+                )
+            ]
+        })
 
-        pic = t.get('pic') or t.get('picUrl') or t.get('cover') or t.get('image') or ''
+    if not items:
+        xbmcgui.Dialog().notification("收藏夹", "暂无收藏", xbmcgui.NOTIFICATION_INFO, 2000)
 
-        label = name + (' - ' + artist if artist else '')
+    return items
+
+
+# =========================
+# TuneHub 榜单路由（最终版）
+# =========================
+
+@plugin.route('/tunehub_toplist/<source>/<id>/')
+def tunehub_toplist(source , id):
+    """
+    展示 TuneHub 榜单歌曲列表：
+    - 自动兼容多种返回结构
+    - 支持更多字段（专辑、时长、封面、平台）
+    - 有缓存、错误处理、日志
+    - 更丰富的 UI（infoLabels）
+    """
+    cache_key = f"tunehub_toplist_{source}_{id}"
+    cache_ttl = 3600  # 1 小时缓存
+
+    # -------------------------
+    # 1. 读取缓存
+    # -------------------------
+    cached = plugin.get_storage().get(cache_key)
+    if cached and time.time() - cached["time"] < cache_ttl:
+        plugin.log.debug(f"[TuneHub] 使用缓存 toplist {source}/{id}")
+        return cached["items"]
+
+    try:
+        resp = music.tunehub_toplist(source, id)
+    except Exception as e:
+        plugin.log.debug(f"[TuneHub] API 调用失败: {e}", level=xbmc.LOGERROR)
+        xbmcgui.Dialog().notification("TuneHub", "排行榜加载失败", xbmcgui.NOTIFICATION_ERROR, 3000)
+        return []
+
+    # -------------------------
+    # 2. 解析数据结构
+    # -------------------------
+    data = resp.get("data") if isinstance(resp, dict) else resp
+    if isinstance(data, dict):
+        tracks = data.get("tracks") or data.get("list") or data.get("data") or []
+    elif isinstance(data, list):
+        tracks = data
+    else:
+        tracks = []
+
+    items = []
+
+    # -------------------------
+    # 3. 遍历歌曲
+    # -------------------------
+    for it in tracks:
+        name = it.get("name") or it.get("title") or ""
+        artist = it.get("artist") or it.get("artistName") or ""
+        album = it.get("album") or it.get("albumName") or ""
+        duration = it.get("duration") or it.get("dt") or 0
+        platform = it.get("platform") or it.get("source") or source
+
+        # 封面字段兼容
+        pic = (
+            it.get("pic") or it.get("picUrl") or it.get("cover") or
+            it.get("image") or it.get("thumbnail") or it.get("thumb") or ""
+        )
+
+        label = f"{name} - {artist} [{platform}]"
+
+        pid = it.get("id")
+        url = it.get("url")
+
+        # -------------------------
+        # 4. 构建 item
+        # -------------------------
+        # if pid:
+        #     path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
+        #     is_playable = False
+        # else:
+        #     path = url
+        #     is_playable = True
+        # is_playable = True
+        # path = url
         item = {
-            'label': label,
-            'path': t.get('url'),
-            'is_playable': True,
-            'info': {
-                'mediatype': 'music',
-                'title': name,
-            },
-            'info_type': 'music',
+            "label": label,
+            "path": url,
+            "is_playable": True,
+            "thumbnail": pic,
+            "icon": pic,
+            "fanart": pic,
+            "info": {
+                "title": name,
+                "artist": artist,
+                "album": album,
+                "duration": duration // 1000 if duration > 1000 else duration,
+                "genre": it.get("genre") or "",
+                "year": it.get("year") or 0,
+                "mediatype": "song",
+            }
         }
-        if artist:
-            item['info']['artist'] = artist
-        if pic:
-            item['thumbnail'] = pic
-            item['icon'] = pic
-            item['fanart'] = pic
 
         items.append(item)
+
+    # -------------------------
+    # 5. 无结果提示
+    # -------------------------
     if not items:
-        xbmcgui.Dialog().notification('TuneHub', '排行榜为空', xbmcgui.NOTIFICATION_INFO, 800, False)
+        xbmcgui.Dialog().notification("TuneHub", "未找到结果", xbmcgui.NOTIFICATION_INFO, 2000)
+        return []
+
+    # -------------------------
+    # 6. 写入缓存
+    # -------------------------
+    plugin.get_storage()[cache_key] = {"time": time.time(), "items": items}
+
+    plugin.log.debug(f"[TuneHub] 成功加载 toplist {source}/{id}，共 {len(items)} 首")
+
     return items
 
 
 @plugin.route('/tunehub_play/<source>/<id>/<br>/')
 def tunehub_play(source, id, br='320k'):
-    # 解析 TuneHub 返回的可能多样结果，优先取可播放 URL
     try:
         resp = music.tunehub_url(id, br=br, source=source)
     except Exception:
@@ -2770,90 +3049,51 @@ def tunehub_play(source, id, br='320k'):
 
     url = None
     if isinstance(resp, dict):
-        if 'url' in resp and resp.get('url'):
-            url = resp.get('url')
-        else:
-            d = resp.get('data')
-            if isinstance(d, dict):
-                url = d.get('url')
-            elif isinstance(d, list) and len(d) > 0 and isinstance(d[0], dict):
-                url = d[0].get('url')
+        url = resp.get("url") or (resp.get("data") or {}).get("url")
     elif isinstance(resp, str):
         url = resp
 
-    # 尝试获取更多元数据用于填充播放界面
+    if not url:
+        xbmcgui.Dialog().notification("TuneHub", "无法获取播放地址", xbmcgui.NOTIFICATION_INFO, 2000)
+        return []
+
+    # 获取元数据
     title = None
     artist = None
     album = None
     pic = None
+
     try:
-        # 优先使用 tunehub_info 获取完整信息
         info_resp = music.tunehub_info(source, id)
-        if isinstance(info_resp, dict):
-            data = info_resp.get('data') or info_resp
-            if isinstance(data, dict):
-                title = data.get('name') or data.get('title') or title
-                artist = data.get('artist') or data.get('artistName') or data.get('artists') or artist
-                album = data.get('album') or data.get('albumName') or album
-                pic = data.get('pic') or data.get('picUrl') or data.get('cover') or pic
-            elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-                d0 = data[0]
-                title = title or d0.get('name') or d0.get('title')
-                artist = artist or d0.get('artist') or d0.get('artistName')
-                album = album or d0.get('album')
-                pic = pic or d0.get('pic') or d0.get('picUrl') or d0.get('cover')
-    except Exception:
+        data = info_resp.get("data") if isinstance(info_resp, dict) else info_resp
+        if isinstance(data, dict):
+            title = data.get("name") or data.get("title")
+            artist = data.get("artist") or data.get("artistName")
+            album = data.get("album") or data.get("albumName")
+            pic = data.get("pic") or data.get("picUrl") or data.get("cover")
+    except:
         pass
 
-    # 若 info 未提供，从 tunehub_url 的 resp 中提取
-    try:
-        if not title and isinstance(resp, dict):
-            d = resp.get('data')
-            if isinstance(d, dict):
-                title = d.get('name') or d.get('title') or title
-                artist = artist or d.get('artist') or d.get('artistName')
-                pic = pic or d.get('pic') or d.get('picUrl') or d.get('cover')
-            elif isinstance(d, list) and len(d) > 0 and isinstance(d[0], dict):
-                d0 = d[0]
-                title = title or d0.get('name') or d0.get('title')
-                artist = artist or d0.get('artist') or d0.get('artistName')
-                pic = pic or d0.get('pic') or d0.get('picUrl') or d0.get('cover')
-    except Exception:
-        pass
+    # 返回可播放媒体项（关键）
+    return [{
+        "label": title or "",
+        "path": url,
+        "is_playable": True,
+        "thumbnail": pic,
+        "icon": pic,
+        "fanart": pic,
+        "info": {
+            "title": title,
+            "artist": artist,
+            "album": album,
+            "mediatype": "song"
+        }
+    }]
 
-    if url:
-        # 构造 ListItem 并填充媒体信息
-        try:
-            li = xbmcgui.ListItem(label=title or '')
-            # 设置信息类型为 music，填充常用字段
-            info = {}
-            if title:
-                info['title'] = title
-            if artist:
-                # 若 artists 是列表，尝试格式化为字符串
-                if isinstance(artist, list):
-                    info['artist'] = ', '.join([a.get('name') if isinstance(a, dict) else str(a) for a in artist])
-                else:
-                    info['artist'] = artist
-            if album:
-                info['album'] = album
-            if info:
-                li.setInfo('music', info)
-            # 设置封面/缩略图
-            if pic:
-                try:
-                    li.setArt({'thumb': pic, 'icon': pic, 'fanart': pic})
-                except Exception:
-                    pass
-            # 使用 Player 播放并传入 ListItem，以便显示媒体信息
-            player = xbmc.Player()
-            player.play(url, li)
-        except Exception:
-            # 回退到简单播放命令
-            xbmc.executebuiltin('PlayMedia(%s)' % url)
-    else:
-        xbmcgui.Dialog().notification('TuneHub', '无法获取播放地址', xbmcgui.NOTIFICATION_INFO, 800, False)
-        return
+
+
+
+
 
 
 @plugin.route('/recommend_playlists/')
