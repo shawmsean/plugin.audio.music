@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="plugin.audio.music" name="music" version="1.0.0" provider-name="sean">
   <requires>
-    <import addon="xbmc.python" version="3.0.0"/>
+    <import addon="xbmc.python" version="3.0.1"/>
     <import addon="script.module.xbmcswift2" version="2.4.0"/>
     <import addon="script.module.beautifulsoup4" version="4.5.3"/>
     <import addon="script.module.requests" version="2.19.1"/>
