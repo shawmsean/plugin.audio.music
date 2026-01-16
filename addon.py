@@ -1210,6 +1210,7 @@ def mlog(cid, pagenum):
             'is_playable': True,
             'icon': video['resource']['mlogBaseData']['coverUrl'],
             'thumbnail': video['resource']['mlogBaseData']['coverUrl'],
+            'fanart': video['resource']['mlogBaseData']['coverUrl'],
             'info': {
                 'mediatype': 'video',
                 'title': video['resource']['mlogBaseData']['text'],
@@ -1485,6 +1486,7 @@ def get_albums_items(albums):
             'path': plugin.url_for('album', id=album_id),
             'icon': picUrl,
             'thumbnail': picUrl,
+            'fanart': picUrl,
             'context_menu': context_menu,
             'info': {'plot': plot_info},
             'info_type': 'video',
@@ -1751,6 +1753,7 @@ def get_mvs_items(mvs):
             'is_playable': True,
             'icon': cover,
             'thumbnail': cover,
+            'fanart': cover,
             'context_menu': context_menu,
             'info': {
                 'mediatype': 'video',
@@ -1924,6 +1927,7 @@ def get_playlists_items(playlists):
             'path': plugin.url_for('playlist', ptype=ptype, id=playlist['id']),
             'icon': img_url,
             'thumbnail': img_url,
+            'fanart': img_url,
             'context_menu': context_menu,
             'info': {
                 'plot': plot_info
@@ -1968,6 +1972,7 @@ def get_artists_items(artists):
             'path': plugin.url_for('artist', id=artist['id']),
             'icon': artist['picUrl'],
             'thumbnail': artist['picUrl'],
+            'fanart': artist['picUrl'],
             'info': {'plot': plot_info},
             'info_type': 'video'
         })
@@ -2417,6 +2422,7 @@ def sea(type):
                         'is_playable': True,
                         'icon': video['coverUrl'],
                         'thumbnail': video['coverUrl'],
+                        'fanart': video['coverUrl'],
                         'info': {
                             'mediatype': 'video',
                             'title': video['title'],
@@ -2440,6 +2446,7 @@ def sea(type):
                         'is_playable': True,
                         'icon': video['coverUrl'],
                         'thumbnail': video['coverUrl'],
+                        'fanart': video['coverUrl'],
                         'info': {
                             'mediatype': 'video',
                             'title': video['title'],
