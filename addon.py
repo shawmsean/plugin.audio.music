@@ -414,7 +414,7 @@ def get_songs(songs, privileges=[], picUrl=None, source=''):
     return datas
 
 
-def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, source='', sourceId=0, enable_index=True):
+def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, source='', sourceId=0, enable_index=True, widget='0'):
     songs = get_songs(datas, privileges, picUrl, source)
     items = []
 
@@ -434,6 +434,20 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                 'mediatype': 'music',
                 'title': '播放全部',
             },
+            'info_type': 'music',
+        })
+    # 推荐页面的播放全部按钮
+    if source == 'recommend_songs' and widget == '0':
+        items.append({
+            'label': '▶ 播放整个推荐列表',
+            'path': plugin.url_for(
+                'play_recommend_songs',
+                song_id='0',
+                mv_id='0',
+                dt='0'
+            ),
+            'is_playable': False,
+            'info': {'mediatype': 'music', 'title': '播放全部'},
             'info_type': 'music',
         })
 
@@ -599,15 +613,28 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                     },
                 }
 
-                if source == 'recommend_songs':
-                    base_item['path'] = plugin.url_for(
-                        'play',
-                        meida_type='song',
-                        song_id=str(play['id']),
-                        mv_id=str(mv_id),
-                        sourceId=str(sourceId),
-                        dt=str(play['dt']//1000)
-                    )
+                if source == 'recommend_songs'and widget == '0':
+                    
+                    if widget == '1':
+                        # ⭐ 小部件点击 → 播放整个推荐列表
+                        base_item['path'] = plugin.url_for(
+                            'play_recommend_songs',
+                            song_id=str(play['id']),
+                            mv_id=str(mv_id),
+                            dt=str(play['dt']//1000)
+                        )
+                    else:
+                        # ⭐ 推荐页面点击 → 播单曲
+                        base_item['path'] = plugin.url_for(
+                            'play',
+                            meida_type='song',
+                            song_id=str(play['id']),
+                            mv_id=str(mv_id),
+                            sourceId=str(sourceId),
+                            dt=str(play['dt']//1000)
+                        )
+                    
+                
                 elif source == 'playlist'and offset == 0:
                     # ⭐ 歌单里的单曲：直接指向 play 路由，不再指向 play_playlist_songs
                     base_item['path'] = plugin.url_for(
@@ -1312,8 +1339,9 @@ def top_artists():
 # 每日推荐
 @plugin.route('/recommend_songs/')
 def recommend_songs():
+    widget = plugin.request.args.get('widget', ['0'])[0]
     songs = music.recommend_playlist().get('data', {}).get('dailySongs', [])
-    return get_songs_items(songs, source='recommend_songs')
+    return get_songs_items(songs, source='recommend_songs', widget=widget)
 
 @plugin.route('/play_recommend_songs/<song_id>/<mv_id>/<dt>/')
 def play_recommend_songs(song_id, mv_id, dt):
