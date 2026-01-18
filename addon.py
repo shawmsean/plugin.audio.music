@@ -417,11 +417,32 @@ def get_songs(songs, privileges=[], picUrl=None, source=''):
 def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, source='', sourceId=0, enable_index=True):
     songs = get_songs(datas, privileges, picUrl, source)
     items = []
+
+    # 如果是歌单页面，在最前面插入一个“播放全部”
+    if source == 'playlist':
+        items.append({
+            'label': '▶ 播放全部',
+            'path': plugin.url_for(
+                'play_playlist_songs',
+                playlist_id=str(sourceId),
+                song_id='0',          # 这里先传 0，表示从第一首开始
+                mv_id='0',
+                dt='0'
+            ),
+            'is_playable': False,
+            'info': {
+                'mediatype': 'music',
+                'title': '播放全部',
+            },
+            'info_type': 'music',
+        })
+
     for play in songs:
         # 隐藏不能播放的歌曲（安全检查 privilege 是否为 None）
         priv = play.get('privilege') or {}
         if priv.get('pl', None) == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'hide_songs') == 'true':
             continue
+
         # 显示序号
         if xbmcplugin.getSetting(int(sys.argv[1]), 'show_index') == 'true' and enable_index:
             offset += 1
@@ -433,8 +454,8 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             str_offset = ''
 
         ar_name = play['artist']
-
         mv_id = play['mv_id']
+
         song_naming_format = xbmcplugin.getSetting(int(sys.argv[1]), 'song_naming_format')
         if song_naming_format == '0':
             label = str_offset + ar_name + ' - ' + play['name']
@@ -445,7 +466,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
         else:
             label = str_offset + ar_name + ' - ' + play['name']
         if 'alia' in play:
-            label += tag('('+play['alia']+')', 'gray')
+            label += tag('(' + play['alia'] + ')', 'gray')
 
         st = priv.get('st')
         if st is not None and st < 0:
@@ -453,7 +474,8 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
         liked_songs = safe_get_storage('liked_songs')
         if play['id'] in liked_songs['ids'] and xbmcplugin.getSetting(int(sys.argv[1]), 'like_tag') == 'true':
             label = tag('♥ ') + label
-        # 仅当 privilege 存在键时再显示相关标签
+
+        # 各种标签逻辑（原样保留）
         if priv:
             st2 = priv.get('st')
             if st2 is not None and st2 < 0:
@@ -466,7 +488,6 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             flag = priv.get('flag', 0)
             if (flag & 64) > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'exclusive_tag') == 'true':
                 label += tag(' 独家')
-            # SQ 标记
             if xbmcplugin.getSetting(int(sys.argv[1]), 'sq_tag') == 'true':
                 play_max = priv.get('playMaxBrLevel')
                 if play_max:
@@ -484,7 +505,6 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                         label += tag(' 杜比全景声')
                 elif priv.get('maxbr', 0) >= 999000:
                     label += tag(' SQ')
-            # payed: 0 未付费 | 3 付费单曲 | 5 付费专辑
             if priv.get('preSell') == True and xbmcplugin.getSetting(int(sys.argv[1]), 'presell_tag') == 'true':
                 label += tag(' 预售')
             elif fee == 4 and priv.get('pl') == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'pay_tag') == 'true':
@@ -494,12 +514,15 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
 
         if 'second_line' in play and play['second_line']:
             label += '\n' + play['second_line']
+
         context_menu = []
         if play['artists']:
             context_menu.append(('跳转到歌手: ' + play['artist'], 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(play['artists']))))
         if play['album_name'] and play['album_id']:
             context_menu.append(('跳转到专辑: ' + play['album_name'], 'Container.Update(%s)' % plugin.url_for('album', id=play['album_id'])))
+
         if mv_id > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'mvfirst') == 'true' and getmv:
+            # MV 优先的情况（原样保留）
             context_menu.extend([
                 ('播放歌曲', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='play_song', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
@@ -526,7 +549,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             context_menu.extend([
                 ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
-                ('歌曲ID:'+str(play['id']), ''),
+                ('歌曲ID:' + str(play['id']), ''),
             ])
 
             if mv_id > 0:
@@ -535,7 +558,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                 context_menu.append(('播放MV', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='play_mv', meida_type='song', song_id=str(
                     play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))))
 
-            # 歌曲不能播放时播放MV
+            # 歌曲不能播放时播放MV（原样保留）
             if priv and priv.get('st') is not None and priv.get('st') < 0 and mv_id > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'auto_play_mv') == 'true':
                 items.append({
                     'label': label,
@@ -552,91 +575,107 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                     'info_type': 'video',
                 })
             else:
+                # ⭐ 这里是关键：根据 source 决定 path，但“歌单里的单曲”一律指向 play 路由
+                base_item = {
+                    'label': label,
+                    'is_playable': True,
+                    'icon': play.get('picUrl', None),
+                    'thumbnail': play.get('picUrl', None),
+                    'fanart': play.get('picUrl', None),
+                    'context_menu': context_menu,
+                    'info': {
+                        'mediatype': 'music',
+                        'title': play['name'],
+                        'artist': ar_name,
+                        'album': play['album_name'],
+                        'tracknumber': play['no'],
+                        'discnumber': play['disc'],
+                        'duration': play['dt']//1000,
+                        'dbid': play['id'],
+                    },
+                    'info_type': 'music',
+                    'properties': {
+                        'ncmid': str(play['id'])
+                    },
+                }
+
                 if source == 'recommend_songs':
-                    items.append({
-                        'label': label,
-                        'path': plugin.url_for('play_recommend_songs', song_id=str(play['id']), mv_id=str(mv_id), dt=str(play['dt']//1000)),
-                        'is_playable': True,
-                        'icon': play.get('picUrl', None),
-                        'thumbnail': play.get('picUrl', None),
-                        'fanart': play.get('picUrl', None),
-                        'context_menu': context_menu,
-                        'info': {
-                            'mediatype': 'music',
-                            'title': play['name'],
-                            'artist': ar_name,
-                            'album': play['album_name'],
-                            'tracknumber': play['no'],
-                            'discnumber': play['disc'],
-                            'duration': play['dt']//1000,
-                            'dbid': play['id'],
-                        },
-                        'info_type': 'music',
-                        'properties': {
-                            'ncmid': str(play['id'])
-                        },
-                    })
-                elif source == 'playlist':
-                    items.append({
-                        'label': label,
-                        'path': plugin.url_for('play_playlist_songs', playlist_id=str(sourceId), song_id=str(play['id']), mv_id=str(mv_id), dt=str(play['dt']//1000)),
-                        'is_playable': True,
-                        'icon': play.get('picUrl', None),
-                        'thumbnail': play.get('picUrl', None),
-                        'fanart': play.get('picUrl', None),
-                        'context_menu': context_menu,
-                        'info': {
-                            'mediatype': 'music',
-                            'title': play['name'],
-                            'artist': ar_name,
-                            'album': play['album_name'],
-                            'tracknumber': play['no'],
-                            'discnumber': play['disc'],
-                            'duration': play['dt']//1000,
-                            'dbid': play['id'],
-                        },
-                        'info_type': 'music',
-                        'properties': {
-                            'ncmid': str(play['id'])
-                        },
-                    })
+                    base_item['path'] = plugin.url_for(
+                        'play',
+                        meida_type='song',
+                        song_id=str(play['id']),
+                        mv_id=str(mv_id),
+                        sourceId=str(sourceId),
+                        dt=str(play['dt']//1000)
+                    )
+                elif source == 'playlist'and offset == 0:
+                    # ⭐ 歌单里的单曲：直接指向 play 路由，不再指向 play_playlist_songs
+                    base_item['path'] = plugin.url_for(
+                        'play',
+                        meida_type='song',
+                        song_id=str(play['id']),
+                        mv_id=str(mv_id),
+                        sourceId=str(sourceId),
+                        dt=str(play['dt']//1000)
+                    )
                 else:
-                    items.append({
-                        'label': label,
-                        'path': plugin.url_for('play', meida_type='song', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000)),
-                        'is_playable': True,
-                        'icon': play.get('picUrl', None),
-                        'thumbnail': play.get('picUrl', None),
-                        'fanart': play.get('picUrl', None),
-                        'context_menu': context_menu,
-                        'info': {
-                            'mediatype': 'music',
-                            'title': play['name'],
-                            'artist': ar_name,
-                            'album': play['album_name'],
-                            'tracknumber': play['no'],
-                            'discnumber': play['disc'],
-                            'duration': play['dt']//1000,
-                            'dbid': play['id'],
-                        },
-                        'info_type': 'music',
-                        'properties': {
-                            'ncmid': str(play['id'])
-                        },
-                    })
+                    base_item['path'] = plugin.url_for(
+                        'play',
+                        meida_type='song',                     # 注意：这里用的是 meida_type，和路由保持一致
+                        song_id=str(play['id']),
+                        mv_id=str(mv_id),
+                        sourceId=str(sourceId),
+                        dt=str(play['dt'] // 1000)
+                    )
+
+
+                items.append(base_item)
+
     return items
 
 
+# @plugin.route('/to_artist/<artists>/')
+# def to_artist(artists):
+#     artists = json.loads(artists)
+#     if len(artists) == 1:
+#         plugin.log.info(f"artists = {artists}")
+
+#         xbmc.executebuiltin('Container.Update(%s)' % plugin.url_for('artist', id=artists[0][1]))
+#         plugin.log.info(f"artists = {artists}")
+
+#         return
+#     sel = xbmcgui.Dialog().select('选择要跳转的歌手', [a[0] for a in artists])
+#     if sel < 0:
+#         return
+#     xbmc.executebuiltin('Container.Update(%s)' % plugin.url_for('artist', id=artists[sel][1]))
 @plugin.route('/to_artist/<artists>/')
 def to_artist(artists):
     artists = json.loads(artists)
+
+    # 安全函数：确保 id 永远是字符串
+    def safe_id(a):
+        name, artist_id = a
+        return str(artist_id or name)
+
+    # 只有一个歌手
     if len(artists) == 1:
-        xbmc.executebuiltin('Container.Update(%s)' % plugin.url_for('artist', id=artists[0][1]))
+        plugin.log.info(f"artists = {artists}")
+        artist_id = safe_id(artists[0])
+        xbmc.executebuiltin(
+            'Container.Update(%s)' % plugin.url_for('artist', id=artist_id)
+        )
         return
+
+    # 多个歌手，弹出选择框
     sel = xbmcgui.Dialog().select('选择要跳转的歌手', [a[0] for a in artists])
     if sel < 0:
         return
-    xbmc.executebuiltin('Container.Update(%s)' % plugin.url_for('artist', id=artists[sel][1]))
+
+    artist_id = safe_id(artists[sel])
+    xbmc.executebuiltin(
+        'Container.Update(%s)' % plugin.url_for('artist', id=artist_id)
+    )
+
 
 @plugin.route('/song_contextmenu/<action>/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/')
 def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
@@ -1289,7 +1328,7 @@ def play_recommend_songs(song_id, mv_id, dt):
     playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
     playlist.clear()
 
-    # 获取所有歌曲的ID和privileges（仅获取 metadata，延迟获取播放 URL）
+    # 获取 metadata（延迟解析 URL）
     ids = [song['id'] for song in songs]
     resp = music.songs_detail(ids)
     datas = resp.get('songs', [])
@@ -1298,17 +1337,16 @@ def play_recommend_songs(song_id, mv_id, dt):
     selected_playlist_index = 0
     playlist_index = 0
 
-    # 添加所有歌曲到播放列表（仅添加 plugin 路径，实际 URL 在 play() 中解析）
     for i, track in enumerate(datas):
         priv = privileges[i] if i < len(privileges) else {}
         if priv.get('pl', None) == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'hide_songs') == 'true':
-            continue  # 跳过不可播放的歌曲
+            continue
 
-        # 检查是否为选中的歌曲
+        # 找到用户点击的那一首
         if str(track['id']) == song_id:
             selected_playlist_index = playlist_index
 
-        # 创建ListItem (保留元数据，但不包含实际播放 URL)
+        # 构建 ListItem（不包含真实 URL）
         artists = track.get('ar') or track.get('artists') or []
         artist = "/".join([a.get('name') for a in artists if a.get('name')])
         album = (track.get('al') or track.get('album') or {}).get('name')
@@ -1320,32 +1358,38 @@ def play_recommend_songs(song_id, mv_id, dt):
         music_tag.setAlbum(album)
         music_tag.setDuration(track.get('dt', 0) // 1000)
 
-        # 设置图片的URL和相关的属性
+        # 封面
         picUrl = None
-        if 'al' in track and track['al'] is not None and 'picUrl' in track['al']:
+        if 'al' in track and track['al'] and 'picUrl' in track['al']:
             picUrl = track['al']['picUrl']
-        elif 'album' in track and track['album'] is not None and 'picUrl' in track['album']:
+        elif 'album' in track and track['album'] and 'picUrl' in track['album']:
             picUrl = track['album']['picUrl']
 
-        if picUrl is not None:
+        if picUrl:
             listitem.setArt({'icon': picUrl, 'thumbnail': picUrl, 'fanart': picUrl})
 
-        # 使用 plugin 路径延迟解析（Kodi 会在播放时调用插件的 play 路由）
-        plugin_path = plugin.url_for('play', meida_type='song', song_id=str(track['id']), mv_id=str(0), sourceId='0', dt=str(track.get('dt', 0)//1000))
+        # ⭐ 推荐歌曲播放列表中的每一项必须指向 play()，不能指向 play_recommend_songs()
+        plugin_path = plugin.url_for(
+            'play',
+            meida_type='song',
+            song_id=str(track['id']),
+            mv_id='0',
+            sourceId='0',
+            dt=str(track.get('dt', 0) // 1000)
+        )
+
         playlist.add(plugin_path, listitem)
         playlist_index += 1
 
-    # 播放播放列表从选中的歌曲开始
+    # ⭐ 播放播放列表（不会跳歌）
     if playlist.size() > 0:
-        # 交给 Kodi 播放；Kodi 会为起始项调用本插件的 play 路由以进行解析
         xbmc.Player().play(playlist, startpos=selected_playlist_index)
     else:
-        # 如果播放列表为空，显示错误
         dialog = xbmcgui.Dialog()
         dialog.notification('播放失败', '每日推荐中没有可播放的歌曲', xbmcgui.NOTIFICATION_INFO, 800, False)
         plugin.set_resolved_url(None)
 
-    # 上传播放记录
+    # 上传播放记录（只记录用户点击的那一首）
     if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
         music.daka(song_id, time=dt)
 
@@ -1381,17 +1425,15 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
     selected_playlist_index = 0
     playlist_index = 0
 
-    # 添加所有歌曲到播放列表（使用 plugin 路径，延迟在 play() 中解析实际播放 URL）
     for i, track in enumerate(datas):
         priv = privileges[i] if i < len(privileges) else {}
         if priv.get('pl', None) == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'hide_songs') == 'true':
             continue  # 跳过不可播放的歌曲
 
-        # 检查是否为选中的歌曲
-        if str(track['id']) == song_id:
+        # 如果传进来的 song_id 为 0，则从第一首开始；否则从匹配的那一首开始
+        if song_id != '0' and str(track['id']) == song_id:
             selected_playlist_index = playlist_index
 
-        # 创建 ListItem（只填充元数据，不请求播放地址）
         artists = track.get('ar') or track.get('artists') or []
         artist = "/".join([a.get('name') for a in artists if a.get('name')])
         album = (track.get('al') or track.get('album') or {}).get('name')
@@ -1411,24 +1453,29 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
         if picUrl is not None:
             listitem.setArt({'icon': picUrl, 'thumbnail': picUrl, 'fanart': picUrl})
 
-        plugin_path = plugin.url_for('play', meida_type='song', song_id=str(track['id']), mv_id=str(0), sourceId=str(playlist_id), dt=str(track.get('dt', 0)//1000))
+        plugin_path = plugin.url_for(
+            'play',
+            meida_type='song',
+            song_id=str(track['id']),
+            mv_id=str(0),
+            sourceId=str(playlist_id),
+            dt=str(track.get('dt', 0)//1000)
+        )
         playlist.add(plugin_path, listitem)
         playlist_index += 1
 
     # 播放播放列表从选中的歌曲开始
     if playlist.size() > 0:
-        # 直接交给 Kodi 播放；Kodi 会为起始项调用本插件的 play 路由以进行解析
         xbmc.Player().play(playlist, startpos=selected_playlist_index)
     else:
-        # 如果播放列表为空，显示错误
         dialog = xbmcgui.Dialog()
         dialog.notification('播放失败', '歌单中没有可播放的歌曲', xbmcgui.NOTIFICATION_INFO, 800, False)
         plugin.set_resolved_url(None)
 
-    # 上传播放记录
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
+    # 上传播放记录（这里用起始 song_id 和 dt）
+    if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true' and song_id != '0':
         music.daka(song_id, time=dt)
-    
+
 
 
 # 历史日推
@@ -3024,6 +3071,45 @@ def tunehub_toplist(source , id):
         #     is_playable = True
         is_playable = True
         # path = url
+        
+        # 提取艺术家信息用于上下文菜单
+        artists = []
+        if "artist" in it and it["artist"]:
+            # 假设艺术家信息可能是一个字符串或者列表
+            if isinstance(it["artist"], str):
+                # 如果是字符串，分割为列表
+                artist_names = [name.strip() for name in it["artist"].split("&")]  # 假设用&分隔
+                # 这里我们无法获得艺术家ID，所以暂时使用名称
+                artists = [[name, None] for name in artist_names if name]
+            elif isinstance(it["artist"], list):
+                # 如果是列表，遍历处理
+                for art in it["artist"]:
+                    if isinstance(art, str):
+                        artists.append([art, None])
+                    elif isinstance(art, dict):
+                        artists.append([art.get("name", ""), art.get("id", None)])
+        
+        # 创建上下文菜单
+        context_menu = []
+        if artists:
+            # 过滤掉没有名字的艺术家
+            valid_artists = [artist_item for artist_item in artists if artist_item[0]]
+            if valid_artists:
+                # 如果只有一个艺术家
+                if len(valid_artists) == 1:
+                    context_menu.append(('跳转到歌手: ' + valid_artists[0][0], 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(valid_artists))))
+                else:
+                    # 如果有多个艺术家，提供选择
+                    context_menu.append(('跳转到歌手: ' + artist, 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(valid_artists))))
+
+        # 添加收藏到歌单选项
+        if pid:
+            context_menu.extend([
+                ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
+                 song_id=str(pid), mv_id='0', sourceId='0', dt=str(duration//1000 if duration > 1000 else duration))),
+                ('歌曲ID:'+str(pid), ''),
+            ])
+
         item = {
             "label": label,
             "path": url,
@@ -3039,7 +3125,8 @@ def tunehub_toplist(source , id):
                 "genre": it.get("genre") or "",
                 "year": it.get("year") or 0,
                 "mediatype": "song",
-            }
+            },
+            "context_menu": context_menu
         }
 
         items.append(item)
