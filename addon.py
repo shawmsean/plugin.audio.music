@@ -100,6 +100,21 @@ def delete_thumbnails():
                         xbmcgui.NOTIFICATION_INFO, 800, False)
 
 
+HISTORY_FILE = xbmc.translatePath('special://profile/addon_data/plugin.audio.music/history.json')
+
+def load_history():
+    if not xbmcvfs.exists(HISTORY_FILE):
+        return []
+    try:
+        with xbmcvfs.File(HISTORY_FILE, 'r') as f:
+            return json.loads(f.read())
+    except:
+        return []
+
+def save_history(history):
+    with xbmcvfs.File(HISTORY_FILE, 'w') as f:
+        f.write(json.dumps(history, ensure_ascii=False))
+
 @plugin.route('/login/')
 def login():
     keyboard = xbmc.Keyboard('', '请输入手机号或邮箱')
@@ -871,13 +886,19 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
                     artist = "/".join([a.get('name') for a in artists if a.get('name')])
                     album = (song_info.get('al') or song_info.get('album') or {}).get('name')
                     duration = song_info.get('dt') or song_info.get('duration')
-
+                    pic=song_info.get('al') or song_info.get('album') or {}
                     listitem = xbmcgui.ListItem(label=title or '')
                     music_tag = listitem.getMusicInfoTag()
                     music_tag.setTitle(title or '')
                     music_tag.setArtist(artist or '')
                     music_tag.setAlbum(album or '')
                     music_tag.setDuration((duration // 1000) if isinstance(duration, int) else 0)
+                    music_tag.setArtistImage(pic.get('picUrl'))
+                    music_tag.setAlbumImage(pic.get('picUrl'))
+                    music_tag.setAlbumType('album')
+                    music_tag.setMediaType('song')
+                    music_tag.setProperty('IsSong', 'true')
+                    music_tag.setProperty('IsInternetStream', 'ture')
                     if song_id and str(song_id).isdigit():
                         music_tag.setDatabaseId(int(song_id))
                 except Exception:
@@ -901,6 +922,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
                     artists = song_info.get('ar') or song_info.get('artists') or []
                     artist = "/".join([a.get('name') for a in artists if a.get('name')])
                     album = (song_info.get('al') or song_info.get('album') or {}).get('name')
+                    album_id = (song_info.get('al') or song_info.get('album') or {}).get('id')
                     duration = song_info.get('dt') or song_info.get('duration')
 
                     listitem = xbmcgui.ListItem(label=title or '')
@@ -927,6 +949,49 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
             listitem = xbmcgui.ListItem()
     except Exception:
         listitem = xbmcgui.ListItem()
+    # 记录播放历史
+    # 记录播放历史
+    try:
+        history = load_history()
+
+        resp = music.songs_detail([song_id])
+        song_info = resp.get('songs', [])[0]
+
+        artists = song_info.get('ar') or song_info.get('artists') or []
+        artist_name = "/".join([a.get('name') for a in artists])
+        artist_id = artists[0].get("id") if artists else 0
+
+        album_info = song_info.get('al') or song_info.get('album') or {}
+        album_name = album_info.get("name")
+        album_id = album_info.get("id") or 0
+        pic = album_info.get("picUrl")
+
+        item = {
+            "id": int(song_id),
+            "name": song_info.get("name"),
+            "artist": artist_name,
+            "artist_id": artist_id,
+            "album": album_name,
+            "album_id": album_id,
+            "pic": pic,
+            "dt": song_info.get("dt", 0) // 1000,
+            "time": int(time.time())
+        }
+
+        # 去重
+        history = [h for h in history if h["id"] != item["id"]]
+
+        # 插入最前
+        history.insert(0, item)
+
+        # 限制数量
+        history = history[:1000]
+
+        save_history(history)
+    except:
+        pass
+
+
 
     try:
         # 记录调试信息，帮助定位不可播放问题
@@ -941,7 +1006,9 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
                 listitem.setPath(url)
         except Exception:
             pass
+        
 
+        # 尝试使用 xbmcswift2 封装的 setResolvedUrl
         # 先尝试使用老的 xbmcswift2 wrapper 设置 resolved url（保证路径被识别），
         # 然后调用 xbmcplugin.setResolvedUrl 以传递 metadata（如果可用）。
         try:
@@ -961,6 +1028,98 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
             plugin.set_resolved_url(url)
         except Exception:
             pass
+
+@plugin.route('/history_by_album/')
+def history_by_album():
+    history = load_history()
+    groups = {}
+
+    for h in history:
+        album = h["album"] or "未知专辑"
+        groups.setdefault(album, []).append(h)
+
+    items = []
+    for album, songs in groups.items():
+        items.append({
+            'label': f'{album} ({len(songs)} 首)',
+            'path': plugin.url_for('history_group_album', album=album),
+            'is_playable': False
+        })
+
+    return items
+
+@plugin.route('/history/')
+def history():
+    return history_page(filter='all')
+
+@plugin.route('/history_filter/<filter>/')
+def history_filter(filter):
+    return history_page(filter)
+
+def history_page(filter):
+    history = load_history()
+    now = int(time.time())
+
+    if filter == '7':
+        history = [h for h in history if now - h["time"] <= 7 * 86400]
+    elif filter == '30':
+        history = [h for h in history if now - h["time"] <= 30 * 86400]
+
+    items = []
+
+    # 顶部按钮
+    items.append({
+        'label': '▶ 再次播放全部',
+        'path': plugin.url_for('history_play_all'),
+        'is_playable': True
+    })
+    items.append({
+        'label': '🗑 清空历史记录',
+        'path': plugin.url_for('history_clear'),
+        'is_playable': False
+    })
+    items.append({
+        'label': '📅 最近 7 天',
+        'path': plugin.url_for('history_filter', filter='7'),
+        'is_playable': False
+    })
+    items.append({
+        'label': '📅 最近 30 天',
+        'path': plugin.url_for('history_filter', filter='30'),
+        'is_playable': False
+    })
+    items.append({
+        'label': '📅 全部历史',
+        'path': plugin.url_for('history'),
+        'is_playable': False
+    })
+    items.append({
+        'label': '👤 按歌手分组',
+        'path': plugin.url_for('history_by_artist'),
+        'is_playable': False
+    })
+    items.append({
+        'label': '💿 按专辑分组',
+        'path': plugin.url_for('history_by_album'),
+        'is_playable': False
+    })
+
+    # 转换歌曲
+    datas = []
+    for h in history:
+        datas.append({
+            "id": h["id"],
+            "name": h["name"],
+            "ar": [{"name": h["artist"], "id": h.get("artist_id", 0)}],
+            "al": {"name": h["album"], "id": h.get("album_id", 0), "picUrl": h["pic"]},
+            "dt": h["dt"] * 1000,
+            "mv_id": 0
+        })
+
+
+    items.extend(get_songs_items(datas, source='history'))
+    return items
+
 
 
 # 主目录
@@ -1041,8 +1200,116 @@ def index():
         items.append({'label': 'TuneHub 歌单', 'path': plugin.url_for('tunehub_playlist')})
     if xbmcplugin.getSetting(int(sys.argv[1]), 'tunehub_toplists') == 'true':
         items.append({'label': 'TuneHub 排行榜', 'path': plugin.url_for('tunehub_toplists')})
+    items.append({
+        'label': '📜 播放历史',
+        'path': plugin.url_for('history'),
+        'is_playable': False
+    })
 
     return items
+
+@plugin.route('/history_clear/')
+def history_clear():
+    save_history([])
+
+    dialog = xbmcgui.Dialog()
+    dialog.notification('历史记录', '已清空', xbmcgui.NOTIFICATION_INFO, 800, False)
+
+    # 返回历史页面
+    return plugin.redirect(plugin.url_for('history'))
+@plugin.route('/history_play_all/')
+def history_play_all():
+    history = load_history()
+    if not history:
+        dialog = xbmcgui.Dialog()
+        dialog.notification('历史记录为空', '没有可播放的歌曲', xbmcgui.NOTIFICATION_INFO, 800, False)
+        return
+
+    playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
+    playlist.clear()
+
+    for h in history:
+        listitem = xbmcgui.ListItem(label=h["name"])
+        listitem.setArt({'icon': h["pic"], 'thumbnail': h["pic"], 'fanart': h["pic"]})
+
+        plugin_path = plugin.url_for(
+            'play',
+            meida_type='song',
+            song_id=str(h["id"]),
+            mv_id='0',
+            sourceId='history',
+            dt=str(h["dt"])
+        )
+        playlist.add(plugin_path, listitem)
+
+    xbmc.Player().play(playlist, startpos=0)
+@plugin.route('/history_by_artist/')
+def history_by_artist():
+    history = load_history()
+    groups = {}
+
+    for h in history:
+        artist = h["artist"] or "未知歌手"
+        groups.setdefault(artist, []).append(h)
+
+    items = []
+    for artist, songs in groups.items():
+        items.append({
+            'label': f'{artist} ({len(songs)} 首)',
+            'path': plugin.url_for('history_group_artist', artist=artist),
+            'is_playable': False
+        })
+
+    return items
+@plugin.route('/history_group_artist/<artist>/')
+def history_group_artist(artist):
+    history = load_history()
+    datas = [h for h in history if h["artist"] == artist]
+
+    songs = []
+    for h in datas:
+        songs.append({
+            "id": h["id"],
+            "name": h["name"],
+            "ar": [{
+                "name": h["artist"],
+                "id": h.get("artist_id", 0)   # ⭐ 自动补全 artist_id
+            }],
+            "al": {
+                "name": h["album"],
+                "id": h.get("album_id", 0),   # ⭐ 自动补全 album_id
+                "picUrl": h["pic"]
+            },
+            "dt": h["dt"] * 1000,
+            "mv_id": h.get("mv_id", 0)        # ⭐ 自动补全 mv_id
+        })
+
+    return get_songs_items(songs, source='history')
+
+@plugin.route('/history_group_album/<album>/')
+def history_group_album(album):
+    history = load_history()
+    datas = [h for h in history if h["album"] == album]
+
+    songs = []
+    for h in datas:
+        songs.append({
+            "id": h["id"],
+            "name": h["name"],
+            "ar": [{
+                "name": h["artist"],
+                "id": h.get("artist_id", 0)   # ⭐ 自动补全 artist_id
+            }],
+            "al": {
+                "name": h["album"],
+                "id": h.get("album_id", 0),   # ⭐ 自动补全 album_id
+                "picUrl": h["pic"]
+            },
+            "dt": h["dt"] * 1000,
+            "mv_id": h.get("mv_id", 0)        # ⭐ 自动补全 mv_id
+        })
+
+    return get_songs_items(songs, source='history')
 
 
 @plugin.route('/vip_timemachine/')
