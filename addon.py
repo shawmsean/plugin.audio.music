@@ -3358,12 +3358,12 @@ def tunehub_toplist(source , id):
         # -------------------------
         # 4. 构建 item
         # -------------------------
-        # if pid:
-        #     path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
-        #     is_playable = True
-        # else:
-        #     path = url
-        #     is_playable = True
+        if pid:
+            path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
+            is_playable = False
+        else:
+            path = url
+            is_playable = True
         is_playable = True
         # path = url
         
@@ -3468,6 +3468,7 @@ def tunehub_play(source, id, br='320k'):
     artist = None
     album = None
     pic = None
+    dt = None
 
     try:
         info_resp = music.tunehub_info(source, id)
@@ -3477,6 +3478,7 @@ def tunehub_play(source, id, br='320k'):
             artist = data.get("artist") or data.get("artistName")
             album = data.get("album") or data.get("albumName")
             pic = data.get("pic") or data.get("picUrl") or data.get("cover")
+            dt = data.get("dt") or data.get("duration") or 0
     except:
         pass
 
@@ -3492,6 +3494,36 @@ def tunehub_play(source, id, br='320k'):
 
     if pic:
         li.setArt({"icon": pic, "thumbnail": pic, "fanart": pic})
+
+    # 记录播放历史（与昨天 play() 完全一致）
+    try:
+        history = load_history()
+
+
+        item = {
+            "id": int(id),
+            "name": title,
+            "artist": artist,
+            "artist_id": 0,
+            "album": album,
+            "album_id": 0,
+            "pic": pic,
+            "dt": dt // 1000,
+            "time": int(time.time())
+        }
+
+        # 去重
+        history = [h for h in history if h["id"] != item["id"]]
+
+        # 插入最前
+        history.insert(0, item)
+
+        # 限制数量
+        history = history[:1000]
+
+        save_history(history)
+    except Exception as e:
+        plugin.log.debug(f"[TuneHub] 写入历史失败: {e}")
 
     # 4. 直接播放真实 URL（与 play_playlist_songs 的 play 路由一致）
     xbmc.Player().play(url, li)
