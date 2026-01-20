@@ -363,6 +363,10 @@ def get_songs(songs, privileges=[], picUrl=None, source=''):
         elif 'duration' in song:
             data['dt'] = song['duration']
 
+        # 添加 source 字段处理
+        if 'source' in song:
+            data['source'] = song['source']
+
         if 'privilege' in song:
             privilege = song['privilege']
         elif len(privileges) > 0:
@@ -466,6 +470,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             'info_type': 'music',
         })
 
+    xbmc.log('plugin.audio.music: play sources: %s' % [p.get('source') for p in songs], xbmc.LOGDEBUG)
     for play in songs:
         # 隐藏不能播放的歌曲（安全检查 privilege 是否为 None）
         priv = play.get('privilege') or {}
@@ -562,7 +567,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             ])
             items.append({
                 'label': label,
-                'path': plugin.url_for('play', meida_type='mv', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000)),
+                'path': plugin.url_for('play', meida_type='mv', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000), source='netease'),
                 'is_playable': True,
                 'icon': play.get('picUrl', None),
                 'thumbnail': play.get('picUrl', None),
@@ -631,7 +636,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                 }
 
                 if source == 'recommend_songs'and widget == '0':
-                    
+
                     if widget == '1':
                         # ⭐ 小部件点击 → 播放整个推荐列表
                         base_item['path'] = plugin.url_for(
@@ -648,7 +653,8 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                             song_id=str(play['id']),
                             mv_id=str(mv_id),
                             sourceId=str(sourceId),
-                            dt=str(play['dt']//1000)
+                            dt=str(play['dt']//1000),
+                            source='netease'  # 每日推荐是网易云歌曲
                         )
                     
                 
@@ -660,21 +666,29 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                         song_id=str(play['id']),
                         mv_id=str(mv_id),
                         sourceId=str(sourceId),
-                        dt=str(play['dt']//1000)
+                        dt=str(play['dt']//1000),
+                        source='netease'  # 歌单歌曲是网易云的
                     )
                 else:
-                    base_item['path'] = plugin.url_for(
-                        'play',
-                        meida_type='song',                     # 注意：这里用的是 meida_type，和路由保持一致
-                        song_id=str(play['id']),
-                        mv_id=str(mv_id),
-                        sourceId=str(sourceId),
-                        dt=str(play['dt'] // 1000)
-                    )
+                    # Check if TuneHub song
+                    if 'source' in play and play['source'] != 'netease':
+                        xbmc.log('plugin.audio.music: TuneHub song detected - source: %s, id: %s' % (play['source'], str(play['id'])), xbmc.LOGDEBUG)
+                        base_item['path'] = plugin.url_for('tunehub_play', source=play['source'], id=str(play['id']), br='320k')
+                    else:
+                        xbmc.log('plugin.audio.music: NetEase song or no source - id: %s, source: %s' % (str(play['id']), play.get('source', 'none')), xbmc.LOGDEBUG)
+                        base_item['path'] = plugin.url_for(
+                            'play',
+                            meida_type='song',                     # 注意：这里用的是 meida_type，和路由保持一致
+                            song_id=str(play['id']),
+                            mv_id=str(mv_id),
+                            sourceId=str(sourceId),
+                            dt=str(play['dt'] // 1000),
+                            source=play.get('source', 'netease')
+                        )
 
 
                 items.append(base_item)
-
+    plugin.log.info(f"items = {items}")
     return items
 
 
@@ -793,7 +807,7 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
             dialog.notification(
                 '收藏', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
     elif action == 'play_song':
-        songs = music.songs_url_v1([song_id], level=level).get("data", [])
+        songs = music.songs_url_v1([song_id], level=level, source='netease').get("data", [])
         urls = [song['url'] for song in songs]
         url = urls[0]
         if url is None:
@@ -813,8 +827,8 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
             xbmc.executebuiltin('PlayMedia(%s)' % url)
 
 
-@plugin.route('/play/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/')
-def play(meida_type, song_id, mv_id, sourceId, dt):
+@plugin.route('/play/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/<source>/')
+def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
     if meida_type == 'mv':
         mv = music.mv_url(mv_id, r).get("data", {})
         url = mv.get('url')
@@ -823,14 +837,14 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
             dialog.notification('MV播放失败', '自动播放歌曲',
                                 xbmcgui.NOTIFICATION_INFO, 800, False)
 
-            songs = music.songs_url_v1([song_id], level=level).get("data", [])
+            songs = music.songs_url_v1([song_id], level=level, source='netease').get("data", [])
             urls = [song['url'] for song in songs]
             if len(urls) == 0:
                 url = None
             else:
                 url = urls[0]
     elif meida_type == 'song':
-        songs = music.songs_url_v1([song_id], level=level).get("data", [])
+        songs = music.songs_url_v1([song_id], level=level, source=source).get("data", [])
         urls = [song['url'] for song in songs]
         # 一般是网络错误
         if len(urls) == 0:
@@ -856,7 +870,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt):
     elif meida_type == 'dj':
         result = music.dj_detail(song_id)
         song_id = result.get('program', {}).get('mainSong', {}).get('id')
-        songs = music.songs_url_v1([song_id], level=level).get("data", [])
+        songs = music.songs_url_v1([song_id], level=level, source='netease').get("data", [])
         urls = [song['url'] for song in songs]
         if len(urls) == 0:
             url = None
@@ -1109,17 +1123,23 @@ def history_page(filter):
     # 转换歌曲
     datas = []
     for h in history:
-        datas.append({
+        data = {
             "id": h["id"],
             "name": h["name"],
             "ar": [{"name": h["artist"], "id": h.get("artist_id", 0)}],
             "al": {"name": h["album"], "id": h.get("album_id", 0), "picUrl": h["pic"]},
             "dt": h["dt"] * 1000,
-            "mv_id": 0
-        })
+            "mv_id": 0,
 
+        }
 
+        # 确保所有歌曲都有source字段，默认netease
+        data["source"] = h.get("source", "netease")
+        datas.append(data)
+
+    xbmc.log('plugin.audio.music: history datas sources: %s' % [d.get('source') for d in datas], xbmc.LOGDEBUG)
     items.extend(get_songs_items(datas, source='history'))
+    # plugin.log.debug(f'history: {items}')
     return items
 
 
@@ -1240,7 +1260,8 @@ def history_play_all():
             song_id=str(h["id"]),
             mv_id='0',
             sourceId='history',
-            dt=str(h["dt"])
+            dt=str(h["dt"]),
+            source=h.get('source', 'netease')
         )
         playlist.add(plugin_path, listitem)
 
@@ -1283,7 +1304,8 @@ def history_group_artist(artist):
                 "picUrl": h["pic"]
             },
             "dt": h["dt"] * 1000,
-            "mv_id": h.get("mv_id", 0)        # ⭐ 自动补全 mv_id
+            "mv_id": h.get("mv_id", 0),       # ⭐ 自动补全 mv_id
+            "source": h.get("source", "netease")  # ⭐ 自动补全 source
         })
 
     return get_songs_items(songs, source='history')
@@ -1308,7 +1330,8 @@ def history_group_album(album):
                 "picUrl": h["pic"]
             },
             "dt": h["dt"] * 1000,
-            "mv_id": h.get("mv_id", 0)        # ⭐ 自动补全 mv_id
+            "mv_id": h.get("mv_id", 0),       # ⭐ 自动补全 mv_id
+            "source": h.get("source", "netease")  # ⭐ 自动补全 source
         })
 
     return get_songs_items(songs, source='history')
@@ -1534,10 +1557,10 @@ def mlog(cid, pagenum):
         mid = video['id']
         if cid == '1002':
             path = plugin.url_for('play', meida_type='mv',
-                                  song_id=0, mv_id=mid, sourceId=cid, dt=0)
+                                  song_id=0, mv_id=mid, sourceId=cid, dt=0, source='netease')
         else:
             path = plugin.url_for('play', meida_type='mlog',
-                                  song_id=0, mv_id=mid, sourceId=cid, dt=0)
+                                  song_id=0, mv_id=mid, sourceId=cid, dt=0, source='netease')
 
         items.append({
             'label': video['resource']['mlogBaseData']['text'],
@@ -1756,7 +1779,8 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
             song_id=str(track['id']),
             mv_id=str(0),
             sourceId=str(playlist_id),
-            dt=str(track.get('dt', 0)//1000)
+            dt=str(track.get('dt', 0)//1000),
+            source='netease'
         )
         playlist.add(plugin_path, listitem)
         playlist_index += 1
@@ -2039,7 +2063,7 @@ def get_dj_items(songs, sourceId):
 
         items.append({
             'label': label,
-            'path': plugin.url_for('play', meida_type='dj', song_id=str(play['id']), mv_id=str(0), sourceId=str(sourceId), dt=str(play['duration']//1000)),
+            'path': plugin.url_for('play', meida_type='dj', song_id=str(play['id']), mv_id=str(0), sourceId=str(sourceId), dt=str(play['duration']//1000), source='netease'),
             'is_playable': True,
             'icon': play.get('coverUrl', None),
             'thumbnail': play.get('coverUrl', None),
@@ -3455,7 +3479,9 @@ def tunehub_play(source, id, br='320k'):
     # 1. 获取真实播放 URL
     try:
         resp = music.tunehub_url(id, br=br, source=source)
-    except Exception:
+        xbmc.log('plugin.audio.music: tunehub_url response for %s/%s: %s' % (source, id, str(resp)), xbmc.LOGDEBUG)
+    except Exception as e:
+        xbmc.log('plugin.audio.music: tunehub_url exception for %s/%s: %s' % (source, id, str(e)), xbmc.LOGERROR)
         resp = {}
 
     url = None
@@ -3465,6 +3491,9 @@ def tunehub_play(source, id, br='320k'):
         url = resp
 
     if not url:
+        xbmc.log('plugin.audio.music: no URL found for TuneHub song %s/%s' % (source, id), xbmc.LOGWARNING)
+        dialog = xbmcgui.Dialog()
+        dialog.notification('TuneHub播放失败', '无法获取%s平台的播放地址' % source.upper(), xbmcgui.NOTIFICATION_INFO, 5000, False)
         xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
         return []
 
@@ -3499,6 +3528,7 @@ def tunehub_play(source, id, br='320k'):
             "album_id": 0,
             "pic": pic,
             "dt": dt // 1000,
+            "source": source,
             "time": int(time.time())
         }
 
@@ -3593,7 +3623,7 @@ def playlist(ptype, id):
 
             items.append({
                 'label': label,
-                'path': plugin.url_for('play', meida_type=meida_type, song_id=str(data['mlogExtVO']['song']['id']), mv_id=str(data['mlogBaseData']['id']), sourceId=str(id), dt='0'),
+                'path': plugin.url_for('play', meida_type=meida_type, song_id=str(data['mlogExtVO']['song']['id']), mv_id=str(data['mlogBaseData']['id']), sourceId=str(id), dt='0', source='netease'),
                 'is_playable': True,
                 'icon': data['mlogBaseData']['coverUrl'],
                 'thumbnail': data['mlogBaseData']['coverUrl'],

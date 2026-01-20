@@ -268,7 +268,7 @@ class NetEase(object):
                       for _id in ids]), ids=json.dumps(ids))
         return self.request("POST", path, params)
 
-    def songs_url(self, ids, bitrate):
+    def songs_url(self, ids, bitrate, source='netease'):
         path = "/weapi/song/enhance/player/url"
         params = dict(ids=ids, br=bitrate)
 
@@ -297,7 +297,7 @@ class NetEase(object):
             url = None
             try:
                 xbmc.log("plugin.audio.music: songs_url trying TuneHub id={} br={}".format(_id, bitrate), xbmc.LOGDEBUG)
-                tun = self.tunehub_url(_id, bitrate)
+                tun = self.tunehub_url(_id, br=bitrate, source=source)
                 xbmc.log("plugin.audio.music: songs_url tunehub raw for id={} -> {}".format(_id, tun), xbmc.LOGDEBUG)
                 if isinstance(tun, dict):
                     if 'url' in tun:
@@ -349,7 +349,7 @@ class NetEase(object):
 
         return {'data': result_data}
 
-    def songs_url_v1(self, ids, level):
+    def songs_url_v1(self, ids, level, source='netease'):
         path = "/weapi/song/enhance/player/url/v1"
 
         # 先使用 TuneHub 逐条获取播放地址，缺失的再回退到网易云原接口
@@ -376,7 +376,7 @@ class NetEase(object):
             url = None
             try:
                 xbmc.log("plugin.audio.music: songs_url_v1 trying TuneHub id={}".format(_id), xbmc.LOGDEBUG)
-                tun = self.tunehub_url(_id)
+                tun = self.tunehub_url(_id, source=source)
                 xbmc.log("plugin.audio.music: songs_url_v1 tunehub raw for id={} -> {}".format(_id, tun), xbmc.LOGDEBUG)
                 if isinstance(tun, dict):
                     if 'url' in tun:
