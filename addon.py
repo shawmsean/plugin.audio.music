@@ -566,6 +566,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                 'is_playable': True,
                 'icon': play.get('picUrl', None),
                 'thumbnail': play.get('picUrl', None),
+                'fanart': play.get('picUrl', None),
                 'context_menu': context_menu,
                 'info': {
                     'mediatype': 'video',
@@ -595,6 +596,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                     'is_playable': True,
                     'icon': play.get('picUrl', None),
                     'thumbnail': play.get('picUrl', None),
+                    'fanart': play.get('picUrl', None),
                     'context_menu': context_menu,
                     'info': {
                         'mediatype': 'video',
@@ -3595,6 +3597,7 @@ def playlist(ptype, id):
                 'is_playable': True,
                 'icon': data['mlogBaseData']['coverUrl'],
                 'thumbnail': data['mlogBaseData']['coverUrl'],
+                'fanart': data['mlogBaseData']['coverUrl'],
                 'context_menu': context_menu,
                 'info': {
                     'mediatype': 'video',
