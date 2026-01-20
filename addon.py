@@ -3360,11 +3360,11 @@ def tunehub_toplist(source , id):
         # -------------------------
         if pid:
             path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
-            is_playable = False
+            is_playable = True
         else:
             path = url
             is_playable = True
-        is_playable = True
+        # is_playable = True
         # path = url
         
         # 提取艺术家信息用于上下文菜单
@@ -3407,7 +3407,7 @@ def tunehub_toplist(source , id):
 
         item = {
             "label": label,
-            "path": url,
+            "path": path,
             "is_playable": is_playable,
             "thumbnail": pic,
             "icon": pic,
@@ -3446,7 +3446,9 @@ def tunehub_toplist(source , id):
 
 @plugin.route('/tunehub_play/<source>/<id>/<br>/')
 def tunehub_play(source, id, br='320k'):
- 
+
+
+    handle = int(sys.argv[1])
 
     # 1. 获取真实播放 URL
     try:
@@ -3461,9 +3463,10 @@ def tunehub_play(source, id, br='320k'):
         url = resp
 
     if not url:
-        xbmcgui.Dialog().notification("TuneHub", "无法获取播放地址", xbmcgui.NOTIFICATION_INFO, 2000)
-        return
-    # 2. 获取元数据（可选）
+        xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+        return []
+
+    # 2. 获取元数据
     title = None
     artist = None
     album = None
@@ -3481,27 +3484,12 @@ def tunehub_play(source, id, br='320k'):
             dt = data.get("dt") or data.get("duration") or 0
     except:
         pass
-
-    # 3. 构建 ListItem（与 play_playlist_songs 完全一致）
-    li = xbmcgui.ListItem(label=title or "")
-    tag = li.getMusicInfoTag()
-    if title:
-        tag.setTitle(title)
-    if artist:
-        tag.setArtist(artist)
-    if album:
-        tag.setAlbum(album)
-
-    if pic:
-        li.setArt({"icon": pic, "thumbnail": pic, "fanart": pic})
-
-    # 记录播放历史（与昨天 play() 完全一致）
+    # 3. 播放历史
     try:
         history = load_history()
 
-
         item = {
-            "id": int(id),
+            "id": str(id),
             "name": title,
             "artist": artist,
             "artist_id": 0,
@@ -3512,21 +3500,36 @@ def tunehub_play(source, id, br='320k'):
             "time": int(time.time())
         }
 
-        # 去重
         history = [h for h in history if h["id"] != item["id"]]
-
-        # 插入最前
         history.insert(0, item)
-
-        # 限制数量
         history = history[:1000]
 
         save_history(history)
+        plugin.log.debug(f"[TuneHub] 写入历史成功")
     except Exception as e:
         plugin.log.debug(f"[TuneHub] 写入历史失败: {e}")
+    # 4. 构造 Kodi 原生 ListItem
+    li = xbmcgui.ListItem(label=title or "")
+    li.setPath(url)
 
-    # 4. 直接播放真实 URL（与 play_playlist_songs 的 play 路由一致）
-    xbmc.Player().play(url, li)
+    li.setInfo("music", {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "duration": dt // 1000 if dt else None,
+        "mediatype": "song"
+    })
+
+    if pic:
+        li.setArt({
+            "thumb": pic,
+            "icon": pic,
+            "fanart": pic
+        })
+
+    # 4. 返回给 Kodi（必须 return []）
+    xbmcplugin.setResolvedUrl(handle, True, li)
+    return []
 
 
 
