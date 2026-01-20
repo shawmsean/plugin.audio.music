@@ -2872,7 +2872,7 @@ def tunehub_search_platform(source):
         label = name + (' - ' + artist if artist else '')
         # 图片字段优先取 `pic`，再尝试其他常见字段
         pic = it.get('pic') or it.get('picUrl') or it.get('cover') or it.get('image') or it.get('thumbnail') or it.get('thumb') or ''
-        item = {'label': label, 'path': plugin.url_for('tunehub_play', source=source, id=it.get('id'), br='320k')}
+        item = {'label': label, 'path': it.get('url'), 'is_playable': True}
         if pic:
             item['thumbnail'] = pic
             item['icon'] = pic
@@ -2910,24 +2910,24 @@ def tunehub_aggregate_search():
         label = name + (' - ' + artist if artist else '') + (' [' + platform + ']' if platform else '')
         pid = it.get('id')
         # 优先使用 id 路由；若无 id，则使用返回的 url（若为直链）
-        if pid:
+        # if pid:
+        #     pic = it.get('pic') or it.get('picUrl') or it.get('cover') or it.get('image') or it.get('thumbnail') or it.get('thumb') or ''
+        #     item = {'label': label, 'path': it.get('url')}
+        #     if pic:
+        #         item['thumbnail'] = pic
+        #         item['icon'] = pic
+        #         item['fanart'] = pic
+        #     items.append(item)
+        # else:
+        url = it.get('url')
+        if url:
             pic = it.get('pic') or it.get('picUrl') or it.get('cover') or it.get('image') or it.get('thumbnail') or it.get('thumb') or ''
-            item = {'label': label, 'path': plugin.url_for('tunehub_play', source=platform or 'netease', id=pid, br='320k')}
+            item = {'label': label, 'path': url, 'is_playable': True}
             if pic:
                 item['thumbnail'] = pic
                 item['icon'] = pic
                 item['fanart'] = pic
             items.append(item)
-        else:
-            url = it.get('url')
-            if url:
-                pic = it.get('pic') or it.get('picUrl') or it.get('cover') or it.get('image') or it.get('thumbnail') or it.get('thumb') or ''
-                item = {'label': label, 'path': url, 'is_playable': True}
-                if pic:
-                    item['thumbnail'] = pic
-                    item['icon'] = pic
-                    item['fanart'] = pic
-                items.append(item)
 
     if not items:
         xbmcgui.Dialog().notification('TuneHub', '未找到结果', xbmcgui.NOTIFICATION_INFO, 800, False)
