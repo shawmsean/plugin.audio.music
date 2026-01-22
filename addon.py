@@ -670,25 +670,21 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                         source='netease'  # 歌单歌曲是网易云的
                     )
                 else:
-                    # Check if TuneHub song
-                    if 'source' in play and play['source'] != 'netease':
-                        xbmc.log('plugin.audio.music: TuneHub song detected - source: %s, id: %s' % (play['source'], str(play['id'])), xbmc.LOGDEBUG)
-                        base_item['path'] = plugin.url_for('tunehub_play', source=play['source'], id=str(play['id']), br='320k')
-                    else:
-                        xbmc.log('plugin.audio.music: NetEase song or no source - id: %s, source: %s' % (str(play['id']), play.get('source', 'none')), xbmc.LOGDEBUG)
-                        base_item['path'] = plugin.url_for(
-                            'play',
-                            meida_type='song',                     # 注意：这里用的是 meida_type，和路由保持一致
-                            song_id=str(play['id']),
-                            mv_id=str(mv_id),
-                            sourceId=str(sourceId),
-                            dt=str(play['dt'] // 1000),
-                            source=play.get('source', 'netease')
-                        )
+                    # Unified play route for all songs
+                    xbmc.log('plugin.audio.music: Song - id: %s, source: %s' % (str(play['id']), play.get('source', 'netease')), xbmc.LOGDEBUG)
+                    base_item['path'] = plugin.url_for(
+                        'play',
+                        meida_type='song',
+                        song_id=str(play['id']),
+                        mv_id=str(mv_id),
+                        sourceId=str(sourceId),
+                        dt=str(play['dt'] // 1000),
+                        source=play.get('source', 'netease')
+                    )
 
 
                 items.append(base_item)
-    plugin.log.info(f"items = {items}")
+    # plugin.log.debug(f"items = {items}")
     return items
 
 
@@ -865,7 +861,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             dialog.notification(
                 '播放失败', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
         else:
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
+            if source == 'netease' and xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
                 music.daka(song_id, time=dt)
     elif meida_type == 'dj':
         result = music.dj_detail(song_id)
@@ -895,27 +891,39 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
         if url is not None:
             if meida_type == 'song':
                 try:
-                    resp = music.songs_detail([song_id])
-                    song_info = resp.get('songs', [])[0]
-                    title = song_info.get('name')
-                    artists = song_info.get('ar') or song_info.get('artists') or []
-                    artist = "/".join([a.get('name') for a in artists if a.get('name')])
-                    album = (song_info.get('al') or song_info.get('album') or {}).get('name')
-                    duration = song_info.get('dt') or song_info.get('duration')
-                    pic=song_info.get('al') or song_info.get('album') or {}
+                    if source == 'netease':
+                        resp = music.songs_detail([song_id])
+                        song_info = resp.get('songs', [])[0]
+                        title = song_info.get('name')
+                        artists = song_info.get('ar') or song_info.get('artists') or []
+                        artist = "/".join([a.get('name') for a in artists if a.get('name')])
+                        album = (song_info.get('al') or song_info.get('album') or {}).get('name')
+                        duration = song_info.get('dt') or song_info.get('duration')
+                        pic = song_info.get('al') or song_info.get('album') or {}
+                        pic_url = pic.get('picUrl')
+                    else:
+                        resp = music.tunehub_info(source, song_id)
+                        song_info = resp.get('data', {})
+                        title = song_info.get('name') or song_info.get('title')
+                        artist = song_info.get('artist') or song_info.get('artistName')
+                        album = song_info.get('album') or song_info.get('albumName')
+                        duration = song_info.get('dt') or song_info.get('duration')
+                        pic_url = song_info.get('pic') or song_info.get('picUrl') or song_info.get('cover')
+
                     listitem = xbmcgui.ListItem(label=title or '')
                     music_tag = listitem.getMusicInfoTag()
                     music_tag.setTitle(title or '')
                     music_tag.setArtist(artist or '')
                     music_tag.setAlbum(album or '')
-                    music_tag.setDuration((duration // 1000) if isinstance(duration, int) else 0)
-                    music_tag.setArtistImage(pic.get('picUrl'))
-                    music_tag.setAlbumImage(pic.get('picUrl'))
+                    music_tag.setDuration((duration // 1000) if isinstance(duration, int) and duration > 1000 else (duration if isinstance(duration, int) else 0))
+                    if pic_url:
+                        music_tag.setArtistImage(pic_url)
+                        music_tag.setAlbumImage(pic_url)
                     music_tag.setAlbumType('album')
                     music_tag.setMediaType('song')
                     music_tag.setProperty('IsSong', 'true')
-                    music_tag.setProperty('IsInternetStream', 'ture')
-                    if song_id and str(song_id).isdigit():
+                    music_tag.setProperty('IsInternetStream', 'true')
+                    if source == 'netease' and song_id and str(song_id).isdigit():
                         music_tag.setDatabaseId(int(song_id))
                 except Exception:
                     listitem = xbmcgui.ListItem()
@@ -966,36 +974,47 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
     except Exception:
         listitem = xbmcgui.ListItem()
     # 记录播放历史
-    # 记录播放历史
     try:
         history = load_history()
 
-        resp = music.songs_detail([song_id])
-        song_info = resp.get('songs', [])[0]
-
-        artists = song_info.get('ar') or song_info.get('artists') or []
-        artist_name = "/".join([a.get('name') for a in artists])
-        artist_id = artists[0].get("id") if artists else 0
-
-        album_info = song_info.get('al') or song_info.get('album') or {}
-        album_name = album_info.get("name")
-        album_id = album_info.get("id") or 0
-        pic = album_info.get("picUrl")
+        if source == 'netease':
+            resp = music.songs_detail([song_id])
+            song_info = resp.get('songs', [])[0]
+            name = song_info.get("name")
+            artists = song_info.get('ar') or song_info.get('artists') or []
+            artist_name = "/".join([a.get('name') for a in artists])
+            artist_id = artists[0].get("id") if artists else 0
+            album_info = song_info.get('al') or song_info.get('album') or {}
+            album_name = album_info.get("name")
+            album_id = album_info.get("id") or 0
+            pic = album_info.get("picUrl")
+            dt = song_info.get("dt", 0) // 1000
+        else:
+            resp = music.tunehub_info(source, song_id)
+            song_info = resp.get('data', {})
+            name = song_info.get('name') or song_info.get('title')
+            artist_name = song_info.get('artist') or song_info.get('artistName')
+            artist_id = 0
+            album_name = song_info.get('album') or song_info.get('albumName')
+            album_id = 0
+            pic = song_info.get('pic') or song_info.get('picUrl') or song_info.get('cover')
+            dt = (song_info.get('dt') or song_info.get('duration') or 0) // 1000
 
         item = {
-            "id": int(song_id),
-            "name": song_info.get("name"),
+            "id": str(song_id),
+            "name": name,
             "artist": artist_name,
             "artist_id": artist_id,
             "album": album_name,
             "album_id": album_id,
             "pic": pic,
-            "dt": song_info.get("dt", 0) // 1000,
+            "dt": dt,
+            "source": source,
             "time": int(time.time())
         }
 
         # 去重
-        history = [h for h in history if h["id"] != item["id"]]
+        history = [h for h in history if not (h["id"] == item["id"] and h.get("source", "netease") == source)]
 
         # 插入最前
         history.insert(0, item)
@@ -1004,7 +1023,8 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
         history = history[:1000]
 
         save_history(history)
-    except:
+    except Exception as e:
+        xbmc.log('plugin.audio.music: failed to save history: %s' % str(e), xbmc.LOGWARNING)
         pass
 
 
@@ -2998,7 +3018,7 @@ def tunehub_playlist_platform(source):
     for t in tracks:
         name = t.get('name') or ''
         artist = t.get('artist') or t.get('artistName') or ''
-        items.append({'label': name + (' - ' + artist if artist else ''), 'path': plugin.url_for('tunehub_play', source=source, id=t.get('id'), br='320k')})
+        items.append({'label': name + (' - ' + artist if artist else ''), 'path': plugin.url_for('play', meida_type='song', song_id=str(t.get('id')), mv_id='0', sourceId='0', dt='0', source=source)})
     if not items:
         xbmcgui.Dialog().notification('TuneHub', '未找到歌单或歌单为空', xbmcgui.NOTIFICATION_INFO, 800, False)
     return items
@@ -3294,8 +3314,8 @@ def favorites():
         label = u"%s - %s [%s]" % (f["name"], f["artist"], f["source"])
         items.append({
             "label": label,
-            "path": plugin.url_for("tunehub_play", source=f["source"], id=f["id"], br="320k"),
-            "is_playable": False,
+            "path": plugin.url_for('play', meida_type='song', song_id=str(f["id"]), mv_id='0', sourceId='0', dt='0', source=f["source"]),
+            "is_playable": True,
             "context_menu": [
                 (
                     "取消收藏",
@@ -3385,7 +3405,7 @@ def tunehub_toplist(source , id):
         # 4. 构建 item
         # -------------------------
         if pid:
-            path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
+            path = plugin.url_for('play', meida_type='song', song_id=str(pid), mv_id='0', sourceId='0', dt='0', source=platform)
             is_playable = True
         else:
             path = url
@@ -3472,6 +3492,10 @@ def tunehub_toplist(source , id):
 
 @plugin.route('/tunehub_play/<source>/<id>/<br>/')
 def tunehub_play(source, id, br='320k'):
+    """
+    DEPRECATED: This route is deprecated. Use play() route instead for seamless TuneHub integration.
+    All TuneHub songs now use the unified play() route.
+    """
 
 
     handle = int(sys.argv[1])
