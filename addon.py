@@ -800,6 +800,13 @@ def to_artist(artists):
 @plugin.route('/song_contextmenu/<action>/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/')
 def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
     if action == 'sub_playlist':
+        # 检查用户是否已登录
+        if not account['uid']:
+            dialog = xbmcgui.Dialog()
+            dialog.notification('收藏失败', '请先登录账号',
+                                xbmcgui.NOTIFICATION_INFO, 800, False)
+            return
+
         ids = []
         names = []
         names.append('+ 新建歌单')
@@ -846,6 +853,13 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
             dialog.notification(
                 '收藏', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
     elif action == 'sub_video_playlist':
+        # 检查用户是否已登录
+        if not account['uid']:
+            dialog = xbmcgui.Dialog()
+            dialog.notification('收藏失败', '请先登录账号',
+                                xbmcgui.NOTIFICATION_INFO, 800, False)
+            return
+
         ids = []
         names = []
         playlists = music.user_playlist(
@@ -1234,8 +1248,10 @@ def index():
         items.append({'label': '私人FM', 'path': plugin.url_for('personal_fm')})
     # 修改: 我的歌单不再检查登录状态
     if xbmcplugin.getSetting(int(sys.argv[1]), 'my_playlists') == 'true':
-        items.append({'label': '我的歌单', 'path': plugin.url_for(
-            'user_playlists', uid=account['uid'])})
+        # 只有在用户已登录（uid 不为空）时才显示"我的歌单"
+        if account['uid']:
+            items.append({'label': '我的歌单', 'path': plugin.url_for(
+                'user_playlists', uid=account['uid'])})
     # 修改: 我的收藏不再检查登录状态
     if xbmcplugin.getSetting(int(sys.argv[1]), 'sublist') == 'true':
         items.append({'label': '我的收藏', 'path': plugin.url_for('sublist')})
@@ -1264,8 +1280,10 @@ def index():
             {'label': '我的云盘', 'path': plugin.url_for('cloud', offset='0')})
     # 修改: 我的主页不再检查登录状态
     if xbmcplugin.getSetting(int(sys.argv[1]), 'home_page') == 'true':
-        items.append(
-            {'label': '我的主页', 'path': plugin.url_for('user', id=account['uid'])})
+        # 只有在用户已登录（uid 不为空）时才显示"我的主页"
+        if account['uid']:
+            items.append(
+                {'label': '我的主页', 'path': plugin.url_for('user', id=account['uid'])})
     if xbmcplugin.getSetting(int(sys.argv[1]), 'new_albums') == 'true':
         items.append(
             {'label': '新碟上架', 'path': plugin.url_for('new_albums', offset='0')})
