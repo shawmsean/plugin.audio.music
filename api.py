@@ -63,26 +63,49 @@ class NetEase(object):
                 'https': 'https://' + proxy,
             }
 
-    def _raw_request(self, method, endpoint, data=None):
+    def _raw_request(self, method, endpoint, data=None, use_mobile_header=False):
+        """发送原始 HTTP 请求
+
+        Args:
+            method: HTTP 方法 (GET/POST)
+            endpoint: 请求端点
+            data: 请求参数
+            use_mobile_header: 是否使用移动端请求头（用于扫码登录等）
+        """
+        headers = self._get_mobile_header() if use_mobile_header else self.header
+
         if method == "GET":
             if not self.enable_proxy:
                 resp = self.session.get(
-                    endpoint, params=data, headers=self.header, timeout=DEFAULT_TIMEOUT
+                    endpoint, params=data, headers=headers, timeout=DEFAULT_TIMEOUT
                 )
             else:
                 resp = self.session.get(
-                    endpoint, params=data, headers=self.header, timeout=DEFAULT_TIMEOUT, proxies=self.proxies
+                    endpoint, params=data, headers=headers, timeout=DEFAULT_TIMEOUT, proxies=self.proxies
                 )
         elif method == "POST":
             if not self.enable_proxy:
                 resp = self.session.post(
-                    endpoint, data=data, headers=self.header, timeout=DEFAULT_TIMEOUT
+                    endpoint, data=data, headers=headers, timeout=DEFAULT_TIMEOUT
                 )
             else:
                 resp = self.session.post(
-                    endpoint, data=data, headers=self.header, timeout=DEFAULT_TIMEOUT, proxies=self.proxies
+                    endpoint, data=data, headers=headers, timeout=DEFAULT_TIMEOUT, proxies=self.proxies
                 )
         return resp
+
+    def _get_mobile_header(self):
+        """获取移动端请求头（模拟 Android 客户端）"""
+        return {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Host": "music.163.com",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36 NeteaseMusic/9.2.70",
+            "Referer": "https://music.163.com/",
+        }
 
     # 生成Cookie对象
     def make_cookie(self, name, value):
@@ -105,7 +128,17 @@ class NetEase(object):
             rest={},
         )
 
-    def request(self, method, path, params={}, default={"code": -1}, custom_cookies={'os': 'android', 'appver': '9.2.70'}):
+    def request(self, method, path, params={}, default={"code": -1}, custom_cookies={'os': 'android', 'appver': '9.2.70'}, use_mobile_header=False):
+        """发送 API 请求
+
+        Args:
+            method: HTTP 方法 (GET/POST)
+            path: API 路径
+            params: 请求参数
+            default: 默认返回值
+            custom_cookies: 自定义 Cookie
+            use_mobile_header: 是否使用移动端请求头（用于扫码登录等）
+        """
         endpoint = "{}{}".format(BASE_URL, path)
         csrf_token = ""
         for cookie in self.session.cookies:
@@ -121,7 +154,7 @@ class NetEase(object):
 
         params = encrypted_request(params)
         try:
-            resp = self._raw_request(method, endpoint, params)
+            resp = self._raw_request(method, endpoint, params, use_mobile_header=use_mobile_header)
             data = resp.json()
         except requests.exceptions.RequestException as e:
             print(e)
@@ -875,18 +908,100 @@ class NetEase(object):
         path = "/weapi/user/level"
         return self.request("POST", path)
 
+    # ========== 短信验证码登录支持 ==========
+
+    def login_send_captcha(self, phone):
+        """发送短信验证码"""
+        # 使用移动端 API 接口
+        path = '/weapi/sms/captcha/sent'
+        params = dict(
+            phone=phone,
+            ctcode='86'  # 中国区号
+        )
+
+        # 设置移动端 Cookie 模拟
+        custom_cookies = {
+            'os': 'android',
+            'appver': '9.2.70',
+            'deviceId': self._generate_device_id()
+        }
+
+        # 使用移动端请求头
+        return self.request("POST", path, params, custom_cookies=custom_cookies, use_mobile_header=True)
+
+    def login_verify_captcha(self, phone, captcha):
+        """验证短信验证码并登录"""
+        # 使用移动端 API 接口
+        path = '/weapi/sms/captcha/verify'
+        params = dict(
+            phone=phone,
+            captcha=captcha,
+            ctcode='86'
+        )
+
+        # 设置移动端 Cookie 模拟
+        custom_cookies = {
+            'os': 'android',
+            'appver': '9.2.70',
+            'deviceId': self._generate_device_id()
+        }
+
+        # 使用移动端请求头
+        data = self.request("POST", path, params, custom_cookies=custom_cookies, use_mobile_header=True)
+
+        # 如果验证成功，保存 cookie
+        if data.get('code', 0) == 200:
+            self.session.cookies.save()
+
+        return data
+
     def login_qr_key(self):
+        """获取二维码登录的 key"""
+        # 使用移动端 API 接口
         path = '/weapi/login/qrcode/unikey'
         params = dict(type=1)
-        return self.request("POST", path, params)
+
+        # 设置移动端 Cookie 模拟
+        custom_cookies = {
+            'os': 'android',
+            'appver': '9.2.70',
+            'deviceId': self._generate_device_id()
+        }
+
+        # 使用移动端请求头
+        return self.request("POST", path, params, custom_cookies=custom_cookies, use_mobile_header=True)
 
     def login_qr_check(self, key):
+        """检查二维码登录状态"""
         path = '/weapi/login/qrcode/client/login'
         params = dict(key=key, type=1)
-        data = self.request("POST", path, params)
+
+        # 设置移动端 Cookie 模拟
+        custom_cookies = {
+            'os': 'android',
+            'appver': '9.2.70',
+            'deviceId': self._generate_device_id()
+        }
+
+        # 使用移动端请求头
+        data = self.request("POST", path, params, custom_cookies=custom_cookies, use_mobile_header=True)
         if data.get('code', 0) == 803:
             self.session.cookies.save()
         return data
+
+    def _generate_device_id(self):
+        """生成设备 ID（用于模拟移动端）"""
+        import hashlib
+        import random
+        import time
+
+        # 生成一个固定的设备 ID（基于时间戳和随机数）
+        # 使用 MD5 生成 32 位设备 ID
+        raw = f"{int(time.time() * 1000)}-{random.randint(100000, 999999)}"
+        device_id = hashlib.md5(raw.encode('utf-8')).hexdigest()
+
+        # 网易云音乐设备 ID 格式：16 位十六进制
+        return device_id[:32]
 
     def vip_timemachine(self, startTime, endTime, limit=60):
         path = '/weapi/vipmusic/newrecord/weekflow'

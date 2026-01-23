@@ -5,9 +5,10 @@
 		<!-- <setting id="username" type="text" label="32003" default=""/> -->
 		<!-- <setting id="password" type="text" label="32004" default=""/> -->
 		<!-- <setting id="login" type="bool" label="32005" default="true"/> -->
-		<setting label="30003" type="action" action="RunPlugin(plugin://plugin.audio.music163/login/)"/>
-		<setting label="30004" type="action" action="RunPlugin(plugin://plugin.audio.music163/qrcode_login/)"/>
-		<setting label="30005" type="action" action="RunPlugin(plugin://plugin.audio.music163/logout/)"/>
+		<setting label="30003" type="action" action="RunPlugin(plugin://plugin.audio.music/login/)"/>
+		<setting label="30004" type="action" action="RunPlugin(plugin://plugin.audio.music/qrcode_login/)"/>
+		<setting label="短信验证码登录" type="action" action="RunPlugin(plugin://plugin.audio.music/login_sms/)"/>
+		<setting label="30005" type="action" action="RunPlugin(plugin://plugin.audio.music/logout/)"/>
 
 		<setting label="30006" type="lsep"/>
 		<setting id="host" type="text" label="30007" default=""/>
@@ -28,7 +29,7 @@
 		<setting id="hide_cover_songs" type="bool" label="30036" default="false" />
 		<setting id="show_album_name" type="bool" label="30037" default="false" />
 		<setting id="upload_play_record" type="bool" label="30038" default="true" />
-		<setting label="30039" type="action" action="RunPlugin(plugin://plugin.audio.music163/delete_thumbnails/)"/>
+		<setting label="30039" type="action" action="RunPlugin(plugin://plugin.audio.music/delete_thumbnails/)"/>
 	</category>
 	<category label="30040">
 		<setting label="30041" type="lsep"/>

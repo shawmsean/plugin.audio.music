@@ -172,6 +172,68 @@ def logout():
         '退出成功', '账号退出成功', xbmcgui.NOTIFICATION_INFO, 800, False)
 
 
+# 短信验证码登录
+@plugin.route('/login_sms/')
+def login_sms():
+    """短信验证码登录"""
+    dialog = xbmcgui.Dialog()
+
+    # 输入手机号
+    keyboard = xbmc.Keyboard('', '请输入手机号')
+    keyboard.doModal()
+    if not keyboard.isConfirmed():
+        return
+    phone = keyboard.getText().strip()
+    if not phone or not phone.isdigit():
+        dialog.notification('登录失败', '请输入有效的手机号',
+                            xbmcgui.NOTIFICATION_INFO, 800, False)
+        return
+
+    # 发送验证码
+    dialog.notification('发送验证码', '正在发送验证码...',
+                        xbmcgui.NOTIFICATION_INFO, 800, False)
+    result = music.login_send_captcha(phone)
+
+    if result.get('code') != 200:
+        msg = result.get('message', result.get('msg', '发送失败'))
+        dialog.notification('发送失败', msg,
+                            xbmcgui.NOTIFICATION_INFO, 800, False)
+        return
+
+    dialog.notification('发送成功', '验证码已发送，请注意查收',
+                        xbmcgui.NOTIFICATION_INFO, 800, False)
+
+    # 输入验证码
+    keyboard = xbmc.Keyboard('', '请输入验证码')
+    keyboard.doModal()
+    if not keyboard.isConfirmed():
+        return
+    captcha = keyboard.getText().strip()
+    if not captcha:
+        dialog.notification('登录失败', '请输入验证码',
+                            xbmcgui.NOTIFICATION_INFO, 800, False)
+        return
+
+    # 验证并登录
+    result = music.login_verify_captcha(phone, captcha)
+
+    if result.get('code') == 200:
+        # 获取用户信息
+        user_info = music.user_level()
+        if user_info.get('code') == 200:
+            account['logined'] = True
+            account['uid'] = user_info['data']['userId']
+            dialog.notification('登录成功', '请重启软件以解锁更多功能',
+                                xbmcgui.NOTIFICATION_INFO, 800, False)
+        else:
+            dialog.notification('登录失败', '获取用户信息失败',
+                                xbmcgui.NOTIFICATION_INFO, 800, False)
+    else:
+        msg = result.get('message', result.get('msg', '登录失败'))
+        dialog.notification('登录失败', msg,
+                            xbmcgui.NOTIFICATION_INFO, 800, False)
+
+
 #limit = int(xbmcplugin.getSetting(int(sys.argv[1]),'number_of_songs_per_page'))
 limit = xbmcplugin.getSetting(int(sys.argv[1]), 'number_of_songs_per_page')
 if limit == '':
