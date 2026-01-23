@@ -597,7 +597,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             if priv and priv.get('st') is not None and priv.get('st') < 0 and mv_id > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'auto_play_mv') == 'true':
                 items.append({
                     'label': label,
-                    'path': plugin.url_for('play', meida_type='song', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000)),
+                    'path': plugin.url_for('play', meida_type='song', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000), source='netease'),
                     'is_playable': True,
                     'icon': play.get('picUrl', None),
                     'thumbnail': play.get('picUrl', None),
@@ -688,7 +688,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
 
 
                 items.append(base_item)
-    plugin.log.info(f"items = {items}")
+    # plugin.log.info(f"items = {items}")
     return items
 
 
@@ -1695,7 +1695,8 @@ def play_recommend_songs(song_id, mv_id, dt):
             song_id=str(track['id']),
             mv_id='0',
             sourceId='0',
-            dt=str(track.get('dt', 0) // 1000)
+            dt=str(track.get('dt', 0) // 1000),
+            source='netease'
         )
 
         playlist.add(plugin_path, listitem)
