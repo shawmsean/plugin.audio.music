@@ -3745,5 +3745,280 @@ def cloud(offset):
     return items
 
 
+@plugin.route('/song_comments/<song_id>/<offset>/')
+def song_comments(song_id, offset='0'):
+    """获取歌曲评论并显示"""
+    xbmc.log(f'[Music Comments] song_id: {song_id}, offset: {offset}', xbmc.LOGDEBUG)
+
+    # 创建对话框实例
+    dialog = xbmcgui.Dialog()
+
+    # 验证song_id是否有效
+    if not song_id or song_id == 'None' or song_id == '':
+        dialog.notification('错误', '无法获取歌曲ID，请确保正在播放网易云音乐的歌曲',
+                            xbmcgui.NOTIFICATION_ERROR, 3000, False)
+        xbmc.log('[Music Comments] Invalid song_id', xbmc.LOGERROR)
+        return []
+    
+    # 保存当前歌曲ID，用于后续分页
+    comments_storage = safe_get_storage('comments')
+    comments_storage['current_song_id'] = song_id
+    xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
+
+    offset = int(offset)
+    limit = 50  # 增加每页显示的评论数量，从20改为50
+
+    try:
+        # 调用评论API
+        xbmc.log(f'[Music Comments] Calling API with song_id={song_id}, offset={offset}, limit={limit}', xbmc.LOGDEBUG)
+        resp = music.song_comments(music_id=song_id, offset=offset, limit=limit)
+        xbmc.log(f'[Music Comments] API response received', xbmc.LOGDEBUG)
+
+        if not resp:
+            dialog.notification('获取评论失败', '无法获取评论数据',
+                                xbmcgui.NOTIFICATION_ERROR, 2000, False)
+            xbmc.log('[Music Comments] No response from API', xbmc.LOGERROR)
+            return []
+
+        # 检查是否有评论数据（hotComments 或 comments 至少有一个）
+        if 'hotComments' not in resp and 'comments' not in resp:
+            dialog.notification('获取评论失败', '无法获取评论数据',
+                                xbmcgui.NOTIFICATION_ERROR, 2000, False)
+            xbmc.log('[Music Comments] No hotComments or comments in response', xbmc.LOGERROR)
+            return []
+
+        # 获取评论总数
+        total = resp.get('total', 0)
+
+        # 构建纯文本格式的评论内容
+        text_content = ""
+
+        # 计算当前页码
+        current_page = (offset // limit) + 1
+        total_pages = (total + limit - 1) // limit if total > 0 else 1
+
+        # 添加标题（包含页码和总数信息）
+        text_content += "═══════════════════════════════════════\n"
+        text_content += f"              歌曲评论 (第{current_page}页/共{total_pages}页)\n"
+        text_content += f"              总计: {total} 条评论\n"
+        text_content += "═══════════════════════════════════════\n\n"
+
+        # 热门评论
+        hot_comments = resp.get('hotComments', [])
+        if hot_comments:
+            text_content += "═══════════════════════════════════════\n"
+            text_content += "🔥 热门评论\n"
+            text_content += "═══════════════════════════════════════\n\n"
+
+            for i, comment in enumerate(hot_comments, 1):
+                user = comment.get('user', {})
+                nickname = user.get('nickname', '匿名用户')
+                content = comment.get('content', '')
+                liked_count = comment.get('likedCount', 0)
+                time_str = comment.get('timeStr', '')
+
+                text_content += f"【{i}】{nickname}\n"
+                text_content += f"    {content}\n"
+                text_content += f"    👍 {liked_count} 点赞 | {time_str}\n\n"
+
+            text_content += "\n"
+
+        # 最新评论
+        comments = resp.get('comments', [])
+        if comments:
+            text_content += "═══════════════════════════════════════\n"
+            text_content += "💬 最新评论\n"
+            text_content += "═══════════════════════════════════════\n\n"
+
+            for i, comment in enumerate(comments, 1):
+                user = comment.get('user', {})
+                nickname = user.get('nickname', '匿名用户')
+                content = comment.get('content', '')
+                liked_count = comment.get('likedCount', 0)
+                time_str = comment.get('timeStr', '')
+
+                text_content += f"【{(offset if not hot_comments else 0) + i}】{nickname}\n"
+                text_content += f"    {content}\n"
+                text_content += f"    👍 {liked_count} 点赞 | {time_str}\n\n"
+
+        # 添加分页信息
+        total = resp.get('total', 0)
+        current_count = len(hot_comments) + len(comments)
+        
+        # 构建按钮列表
+        items = []
+        
+        # 如果当前不是第一页，添加返回顶部按钮
+        if offset > 0:
+            items.append({
+                'label': f"⬆ 返回第一页",
+                'path': plugin.url_for('load_more_comments', offset='0'),
+                'is_playable': False,
+            })
+        
+        if current_count < total:
+            text_content += "\n"
+            text_content += "═══════════════════════════════════════\n"
+            text_content += f"已显示: {current_count}/{total} 条评论\n"
+            text_content += f"当前页: {current_page}/{total_pages}\n"
+            text_content += "按 ESC 返回\n"
+            text_content += "═══════════════════════════════════════\n"
+            
+            # 添加"加载更多"按钮
+            items.append({
+                'label': f"▶ 加载更多评论 ({current_count}/{total})",
+                'path': plugin.url_for('load_more_comments', offset=str(offset + limit)),
+                'is_playable': False,
+            })
+            
+            # 先显示文本内容
+            dialog.textviewer('歌曲评论', text_content)
+            
+            return items
+        else:
+            # 没有更多评论了
+            text_content += "\n"
+            text_content += "═══════════════════════════════════════\n"
+            text_content += f"已显示全部 {total} 条评论\n"
+            text_content += f"当前页: {current_page}/{total_pages}\n"
+            text_content += "按 ESC 返回\n"
+            text_content += "═══════════════════════════════════════\n"
+
+            # 显示文本内容
+            dialog.textviewer('歌曲评论', text_content)
+            
+            return items
+
+    except Exception as e:
+        xbmc.log(f'获取歌曲评论失败: {str(e)}', xbmc.LOGERROR)
+        dialog = xbmcgui.Dialog()
+        dialog.notification('错误', f'获取评论失败: {str(e)}',
+                            xbmcgui.NOTIFICATION_ERROR, 2000, False)
+        return []
+
+
+@plugin.route('/load_more_comments/<offset>/')
+def load_more_comments(offset='0'):
+    """加载更多评论（从存储中获取歌曲ID）"""
+    xbmc.log(f'[Music Comments] Loading more comments, offset: {offset}', xbmc.LOGDEBUG)
+    
+    # 从存储中获取歌曲ID
+    comments_storage = safe_get_storage('comments')
+    song_id = comments_storage.get('current_song_id', '')
+    
+    if not song_id:
+        dialog = xbmcgui.Dialog()
+        dialog.notification('错误', '无法获取歌曲ID，请重新打开评论',
+                            xbmcgui.NOTIFICATION_ERROR, 3000, False)
+        xbmc.log('[Music Comments] No song_id in storage', xbmc.LOGERROR)
+        return []
+    
+    xbmc.log(f'[Music Comments] Loaded song_id from storage: {song_id}', xbmc.LOGDEBUG)
+    
+    # 调用评论功能
+    return song_comments(song_id=song_id, offset=offset)
+
+
+@plugin.route('/current_song_comments/<offset>/')
+def current_song_comments(offset='0'):
+    """获取当前播放歌曲的评论（从URL解析ID）"""
+    xbmc.log(f'[Music Comments] Getting current song comments, offset: {offset}', xbmc.LOGDEBUG)
+
+    # 获取播放URL
+    play_url = xbmc.getInfoLabel('Player.Filenameandpath')
+    xbmc.log(f'[Music Comments] Current play URL: {play_url}', xbmc.LOGDEBUG)
+
+    # 从URL中提取歌曲ID
+    song_id = ""
+    if play_url and "plugin.audio.music/play/song/" in play_url:
+        try:
+            # URL格式: plugin://plugin.audio.music/play/song/1811921555/0/0/207/netease/
+            parts = play_url.split('/play/song/')
+            if len(parts) > 1:
+                song_part = parts[1].split('/')[0]
+                song_id = song_part
+                xbmc.log(f'[Music Comments] Extracted song_id: {song_id}', xbmc.LOGDEBUG)
+        except Exception as e:
+            xbmc.log(f'[Music Comments] Error extracting ID from URL: {str(e)}', xbmc.LOGERROR)
+
+    # 验证song_id是否有效
+    if not song_id or song_id == 'None' or song_id == '':
+        dialog = xbmcgui.Dialog()
+        dialog.notification('错误', '无法从播放URL提取歌曲ID，请确保正在播放网易云音乐插件的歌曲',
+                            xbmcgui.NOTIFICATION_ERROR, 3000, False)
+        xbmc.log('[Music Comments] Invalid song_id extracted from URL', xbmc.LOGERROR)
+        return []
+
+    # 调用评论功能
+    return song_comments(song_id=song_id, offset=offset)
+
+
+@plugin.route('/debug_song_info/')
+def debug_song_info():
+    """调试当前播放歌曲信息"""
+    dialog = xbmcgui.Dialog()
+
+    # 尝试获取当前播放歌曲的各种属性
+    song_id = xbmc.getInfoLabel('MusicPlayer.Property(dbid)')
+    song_id2 = xbmc.getInfoLabel('MusicPlayer.Property(id)')
+    song_id3 = xbmc.getInfoLabel('ListItem.DBID')
+    song_id4 = xbmc.getInfoLabel('ListItem.Property(Item_ID)')
+    song_title = xbmc.getInfoLabel('MusicPlayer.Title')
+    song_artist = xbmc.getInfoLabel('MusicPlayer.Artist')
+    song_album = xbmc.getInfoLabel('MusicPlayer.Album')
+
+    # 获取Home窗口的调试属性
+    debug_song_id = xbmc.getInfoLabel('Window(Home).Property(DebugSongID)')
+    debug_song_id2 = xbmc.getInfoLabel('Window(Home).Property(DebugSongID2)')
+    debug_song_id3 = xbmc.getInfoLabel('Window(Home).Property(DebugSongID3)')
+
+    # 获取播放URL
+    play_url = xbmc.getInfoLabel('Player.Filenameandpath')
+
+    # 从URL中提取歌曲ID
+    extracted_id = ""
+    if play_url and "plugin.audio.music/play/song/" in play_url:
+        try:
+            # URL格式: plugin://plugin.audio.music/play/song/1811921555/0/0/207/netease/
+            parts = play_url.split('/play/song/')
+            if len(parts) > 1:
+                song_part = parts[1].split('/')[0]
+                extracted_id = song_part
+        except Exception as e:
+            xbmc.log(f'[Music Debug] Error extracting ID from URL: {str(e)}', xbmc.LOGERROR)
+
+    info = "=== 当前播放歌曲信息 ===\n\n"
+    info += f"歌曲ID (MusicPlayer.Property(dbid)): {song_id}\n"
+    info += f"歌曲ID (MusicPlayer.Property(id)): {song_id2}\n"
+    info += f"歌曲ID (ListItem.DBID): {song_id3}\n"
+    info += f"歌曲ID (ListItem.Property(Item_ID)): {song_id4}\n"
+    info += f"歌曲ID (从URL提取): {extracted_id}\n\n"
+    info += f"播放URL: {play_url}\n\n"
+    info += f"歌曲标题: {song_title}\n"
+    info += f"艺术家: {song_artist}\n"
+    info += f"专辑: {song_album}\n\n"
+    info += "=== OSD设置的调试属性 ===\n\n"
+    info += f"DebugSongID (dbid): {debug_song_id}\n"
+    info += f"DebugSongID2 (id): {debug_song_id2}\n"
+    info += f"DebugSongID3 (ListItem.DBID): {debug_song_id3}\n\n"
+    info += "=== 说明 ===\n\n"
+    if extracted_id:
+        info += f"✓ 成功从URL提取到歌曲ID: {extracted_id}\n\n"
+        info += "现在可以使用这个ID来获取评论了！\n"
+    else:
+        info += "✗ 未能从URL提取到歌曲ID\n\n"
+        info += "如果所有ID都为空，说明：\n"
+        info += "1. 可能不是从网易云音乐插件播放的歌曲\n"
+        info += "2. 可能是本地文件或其他来源的音乐\n"
+        info += "3. 需要通过 plugin.audio.music 插件播放歌曲\n\n"
+        info += "请确保通过以下方式播放歌曲：\n"
+        info += "- 进入插件 → 搜索或浏览 → 选择歌曲播放"
+
+    dialog.textviewer('调试信息', info)
+    xbmc.log(f'[Music Debug] {info}', xbmc.LOGDEBUG)
+
+    return []
+
+
 if __name__ == '__main__':
     plugin.run()
