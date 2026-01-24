@@ -622,6 +622,8 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             context_menu.extend([
                 ('播放歌曲', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='play_song', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
+                ('查看评论', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='view_comments', meida_type='song',
+                 song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
                 ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
                 ('收藏到视频歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_video_playlist', meida_type='song',
@@ -644,6 +646,8 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             })
         else:
             context_menu.extend([
+                ('查看评论', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='view_comments', meida_type='song',
+                 song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
                 ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
                 ('歌曲ID:' + str(play['id']), ''),
@@ -882,6 +886,17 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
             dialog = xbmcgui.Dialog()
             dialog.notification(
                 '收藏', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
+    elif action == 'view_comments':
+        # 查看歌曲评论
+        xbmc.log(f'[Music Comments] Viewing comments for song_id: {song_id}', xbmc.LOGDEBUG)
+        
+        # 保存歌曲ID到存储
+        comments_storage = safe_get_storage('comments')
+        comments_storage['current_song_id'] = song_id
+        xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
+        
+        # 调用评论功能
+        xbmc.executebuiltin(f'ActivateWindow(10025,plugin://plugin.audio.music/song_comments/{song_id}/0)')
     elif action == 'play_song':
         songs = music.songs_url_v1([song_id], level=level, source='netease').get("data", [])
         urls = [song['url'] for song in songs]
