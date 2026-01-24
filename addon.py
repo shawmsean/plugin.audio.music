@@ -3813,17 +3813,16 @@ def song_comments(song_id, offset='0'):
         total_pages = (total + limit - 1) // limit if total > 0 else 1
 
         # 添加标题（包含页码和总数信息）
-        text_content += "═══════════════════════════════════════\n"
+
         text_content += f"              歌曲评论 (第{current_page}页/共{total_pages}页)\n"
         text_content += f"              总计: {total} 条评论\n"
-        text_content += "═══════════════════════════════════════\n\n"
+        text_content += "═══════════════════════════════════════\n"
 
         # 热门评论
         hot_comments = resp.get('hotComments', [])
         if hot_comments:
-            text_content += "═══════════════════════════════════════\n"
             text_content += "🔥 热门评论\n"
-            text_content += "═══════════════════════════════════════\n\n"
+            text_content += "═══════════════════════════════════════\n"
 
             for i, comment in enumerate(hot_comments, 1):
                 user = comment.get('user', {})
@@ -3841,9 +3840,9 @@ def song_comments(song_id, offset='0'):
         # 最新评论
         comments = resp.get('comments', [])
         if comments:
-            text_content += "═══════════════════════════════════════\n"
+
             text_content += "💬 最新评论\n"
-            text_content += "═══════════════════════════════════════\n\n"
+            text_content += "═══════════════════════════════════════\n"
 
             for i, comment in enumerate(comments, 1):
                 user = comment.get('user', {})
@@ -3873,7 +3872,6 @@ def song_comments(song_id, offset='0'):
         
         if current_count < total:
             text_content += "\n"
-            text_content += "═══════════════════════════════════════\n"
             text_content += f"已显示: {current_count}/{total} 条评论\n"
             text_content += f"当前页: {current_page}/{total_pages}\n"
             text_content += "按 ESC 返回\n"
