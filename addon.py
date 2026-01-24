@@ -1807,7 +1807,14 @@ def play_recommend_songs(song_id, mv_id, dt):
 
     # 上传播放记录（只记录用户点击的那一首）
     if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
-        music.daka(song_id, time=dt)
+        try:
+            result = music.daka(song_id, time=dt)
+            if result.get('code') == 200:
+                print(f"[Play] 播放记录上传成功: song_id={song_id}")
+            else:
+                print(f"[Play] 播放记录上传失败: {result.get('msg', '未知错误')}")
+        except Exception as e:
+            print(f"[Play] 播放记录上传异常: {str(e)}")
 
 
   
@@ -1891,7 +1898,14 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
 
     # 上传播放记录（这里用起始 song_id 和 dt）
     if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true' and song_id != '0':
-        music.daka(song_id, time=dt)
+        try:
+            result = music.daka(song_id, time=dt)
+            if result.get('code') == 200:
+                print(f"[Play Playlist] 播放记录上传成功: song_id={song_id}")
+            else:
+                print(f"[Play Playlist] 播放记录上传失败: {result.get('msg', '未知错误')}")
+        except Exception as e:
+            print(f"[Play Playlist] 播放记录上传异常: {str(e)}")
 
 
 

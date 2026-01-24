@@ -699,22 +699,69 @@ class NetEase(object):
         params = dict(id=id)
         return self.request("POST", path, params)
 
-    # 打卡
+    # 打卡（上传播放记录）
     def daka(self, id, sourceId=0, time=240):
+        """
+        上传歌曲播放记录到网易云
+
+        Args:
+            id: 歌曲ID
+            sourceId: 来源ID
+            time: 播放时长（秒）
+        """
+        # 方法1：使用 /weapi/feedback/weblog（旧版API）
         path = "/weapi/feedback/weblog"
         params = {'logs': json.dumps([{
             'action': 'play',
             'json': {
                 "download": 0,
                 "end": 'playend',
-                "id": id,
-                "sourceId": sourceId,
-                "time": time,
+                "id": str(id),
+                "sourceId": str(sourceId),
+                "time": str(time),
                 "type": 'song',
                 "wifi": 0,
             }
         }])}
-        return self.request("POST", path, params)
+
+        try:
+            result = self.request("POST", path, params)
+            if result.get('code') == 200:
+                print(f"[Daka] 播放记录上传成功: song_id={id}, time={time}s, sourceId={sourceId}")
+                return result
+            else:
+                print(f"[Daka] 播放记录上传失败: song_id={id}, code={result.get('code')}, msg={result.get('msg')}")
+        except Exception as e:
+            print(f"[Daka] 播放记录上传异常: song_id={id}, error={str(e)}")
+
+        # 方法2：尝试使用新版API（如果旧版失败）
+        try:
+            path = "/weapi/feedback/weblog"
+            params = {
+                'logs': json.dumps([{
+                    'action': 'play',
+                    'json': {
+                        "download": 0,
+                        "end": 'playend',
+                        "id": str(id),
+                        "sourceId": str(sourceId),
+                        "time": str(time),
+                        "type": 'song',
+                        "wifi": 0,
+                        "type": 'song',
+                        "source": 'list'
+                    }
+                }])
+            }
+            result = self.request("POST", path, params)
+            if result.get('code') == 200:
+                print(f"[Daka] 播放记录上传成功（新版API）: song_id={id}, time={time}s")
+                return result
+        except Exception as e:
+            print(f"[Daka] 新版API也失败: {str(e)}")
+
+        # 返回失败结果
+        return {"code": -1, "msg": "播放记录上传失败"}
 
     # 云盘歌曲
     def cloud_songlist(self, offset=0, limit=50):
