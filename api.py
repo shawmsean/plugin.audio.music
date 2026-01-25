@@ -480,6 +480,13 @@ class NetEase(object):
             else:
                 resp = self.session.get(TUNEHUB_API, params=params, headers=headers_for_tunehub, timeout=DEFAULT_TIMEOUT, proxies=self.proxies, verify=False)
             xbmc.log("plugin.audio.music: tunehub_request params={} status={} url={}".format(params, getattr(resp, 'status_code', 'N/A'), getattr(resp, 'url', 'N/A')), xbmc.LOGDEBUG)
+
+            # 检查 HTTP 状态码，如果返回错误（如 502），则返回 None 表示 TuneHub API 失败
+            status_code = getattr(resp, 'status_code', None)
+            if status_code and status_code >= 400:
+                xbmc.log("plugin.audio.music: tunehub_request HTTP error status={}, returning None for fallback".format(status_code), xbmc.LOGWARNING)
+                return None
+
             # 尝试解析 JSON
             try:
                 data = resp.json()
@@ -521,7 +528,7 @@ class NetEase(object):
                 return {}
         except Exception as e:
             xbmc.log("plugin.audio.music: tunehub_request failed: {}".format(e), xbmc.LOGERROR)
-            return {}
+            return None
 
     def tunehub_url(self, id, br=None, source='netease'):
         """Request TuneHub for a playable URL for `id`.

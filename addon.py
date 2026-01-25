@@ -428,6 +428,9 @@ def get_songs(songs, privileges=[], picUrl=None, source=''):
         # 添加 source 字段处理
         if 'source' in song:
             data['source'] = song['source']
+        else:
+            # 为所有歌曲设置默认 source，确保私人FM等接口返回的歌曲能正常播放
+            data['source'] = 'netease'
 
         if 'privilege' in song:
             privilege = song['privilege']
