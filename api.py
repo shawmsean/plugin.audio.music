@@ -46,6 +46,11 @@ LXMUSIC_SOURCE_MAPPING = {
     'tidal': 'td'
 }
 
+# 搜索 API 配置
+SEARCH_API_URL = 'https://music-api.gdstudio.xyz/api.php'
+# 搜索 API 支持的音源（与 LXMUSIC 映射对应）
+SEARCH_API_SOURCES = ['kuwo', 'netease', 'tencent', 'migu', 'kugou']
+
 PROFILE = xbmc.translatePath(xbmcaddon.Addon().getAddonInfo('profile'))
 if not os.path.exists(PROFILE):
     os.makedirs(PROFILE)
@@ -407,7 +412,20 @@ class NetEase(object):
 
         return {'data': result_data}
 
-    def songs_url_v1(self, ids, level, source='netease'):
+    def songs_url_v1(self, ids, level, source='netease', song_names=None, artist_names=None):
+        """
+        获取歌曲播放链接（带智能搜索回退）
+
+        Args:
+            ids: 歌曲ID列表或单个ID
+            level: 音质级别 (standard/exceed/high/lossless/hires/dolby/jyeffect/jymaster)
+            source: 音源 (netease/tencent/migu/kugou/kuwo/joox/deezer/ximalaya/apple/spotify/ytmusic/qobuz/tidal)
+            song_names: 歌曲名称列表（用于搜索回退）
+            artist_names: 歌手名称列表（用于搜索回退）
+
+        Returns:
+            {'data': [{'id': id, 'url': url, 'level': level, 'source': source}]}
+        """
         path = "/weapi/song/enhance/player/url/v1"
 
         # 解析 ids 参数
@@ -438,21 +456,48 @@ class NetEase(object):
         xbmc.log("plugin.audio.music: LXMUSIC source mapping: {} -> {}, quality: {} -> {}".format(
             source, lxmusic_source, level, quality), xbmc.LOGDEBUG)
 
-        for _id in ids_list:
+        # 处理歌曲名称和歌手名称（用于搜索回退）
+        if isinstance(song_names, str):
+            song_names = [song_names]
+        elif song_names is None:
+            song_names = [None] * len(ids_list)
+
+        if isinstance(artist_names, str):
+            artist_names = [artist_names]
+        elif artist_names is None:
+            artist_names = [None] * len(ids_list)
+
+        for idx, _id in enumerate(ids_list):
             url = None
             used_source = None
+            song_name = song_names[idx] if idx < len(song_names) else None
+            artist_name = artist_names[idx] if idx < len(artist_names) else None
 
             # 1. 如果 source 支持,优先使用 LXMUSIC API
             if lxmusic_source:
                 try:
                     xbmc.log("plugin.audio.music: songs_url_v1 trying LXMUSIC id={} source={}".format(_id, lxmusic_source), xbmc.LOGDEBUG)
                     url = self._lxmusic_get_music_url(lxmusic_source, str(_id), quality)
+
                     if url:
-                        used_source = 'lxmusic'
-                        xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
+                        # 检查 URL 是否可用
+                        if self._check_url_valid(url):
+                            used_source = 'lxmusic'
+                            xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
+                        else:
+                            xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC URL不可用 id={}".format(_id), xbmc.LOGWARNING)
+                            url = None
                 except Exception as e:
                     xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
                     url = None
+
+                # 1.5. 如果 LXMUSIC 返回的链接不可用，尝试搜索回退
+                if not url and (song_name or artist_name):
+                    xbmc.log("plugin.audio.music: songs_url_v1 尝试搜索回退 id={} song_name={} artist_name={}".format(
+                        _id, song_name, artist_name), xbmc.LOGDEBUG)
+                    url = self._search_and_retry_lxmusic(str(_id), song_name, artist_name, lxmusic_source, quality)
+                    if url:
+                        used_source = 'lxmusic_search'
 
             # 2. 如果 LXMUSIC 失败或 source 是 netease，尝试 TuneHub
             if not url:
@@ -472,11 +517,23 @@ class NetEase(object):
                         url = tun
 
                     if url:
-                        used_source = 'tunehub'
-                        xbmc.log("plugin.audio.music: songs_url_v1 TuneHub success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
+                        # 检查 URL 是否可用
+                        if self._check_url_valid(url):
+                            used_source = 'tunehub'
+                            xbmc.log("plugin.audio.music: songs_url_v1 TuneHub success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
+                        else:
+                            xbmc.log("plugin.audio.music: songs_url_v1 TuneHub URL不可用 id={}".format(_id), xbmc.LOGWARNING)
+                            url = None
                 except Exception as e:
                     xbmc.log("plugin.audio.music: songs_url_v1 TuneHub failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
                     url = None
+
+            # 2.5. 如果 TuneHub 也失败，且支持搜索回退，尝试搜索回退
+            if not url and lxmusic_source:
+                xbmc.log("plugin.audio.music: songs_url_v1 TuneHub失败，尝试搜索回退 id={}".format(_id), xbmc.LOGDEBUG)
+                url = self._search_and_retry_lxmusic(str(_id), song_name, artist_name, lxmusic_source, quality)
+                if url:
+                    used_source = 'lxmusic_search_after_tunehub'
 
             xbmc.log("plugin.audio.music: songs_url_v1 id={} url={} used_source={}".format(_id, url, used_source), xbmc.LOGDEBUG)
             result_data.append({'id': _id, 'url': url, 'level': level, 'source': used_source})
@@ -1306,3 +1363,222 @@ class NetEase(object):
             'jymaster': 'master'
         }
         return level_mapping.get(level, '320k')
+
+    def _search_music_by_name(self, keyword: str, source: str = 'kuwo', limit: int = 5) -> list:
+        """
+        通过搜索 API 搜索音乐
+
+        Args:
+            keyword: 搜索关键词（歌曲名或歌手名）
+            source: 音源 (kuwo/netease/tencent/migu/kugou)
+            limit: 返回结果数量
+
+        Returns:
+            搜索结果列表，每个元素包含歌曲信息
+        """
+        if not keyword:
+            return []
+
+        params = {
+            'types': 'search',
+            'source': source,
+            'name': keyword,
+            'count': limit,
+            'pages': 1
+        }
+
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+
+            xbmc.log(f"plugin.audio.music: 搜索API请求: keyword={keyword}, source={source}", xbmc.LOGDEBUG)
+            response = requests.get(SEARCH_API_URL, params=params, headers=headers, timeout=10)
+
+            if response.status_code != 200:
+                xbmc.log(f"plugin.audio.music: 搜索API请求失败，状态码: {response.status_code}", xbmc.LOGWARNING)
+                return []
+
+            data = response.json()
+            xbmc.log(f"plugin.audio.music: 搜索API响应: {data}", xbmc.LOGDEBUG)
+
+            # 处理响应数据
+            songs = data if isinstance(data, list) else data.get('data', [])
+
+            # 转换为统一格式
+            result = []
+            for song in songs:
+                result.append({
+                    'id': song.get('id') or song.get('track_id') or '',
+                    'name': song.get('name') or song.get('title') or '',
+                    'artist': song.get('artist') or song.get('singer') or '',
+                    'album': song.get('album') or song.get('album_name') or '',
+                    'source': song.get('source') or source
+                })
+
+            xbmc.log(f"plugin.audio.music: 搜索API找到 {len(result)} 首歌曲", xbmc.LOGDEBUG)
+            return result
+
+        except Exception as e:
+            xbmc.log(f"plugin.audio.music: 搜索API异常: {str(e)}", xbmc.LOGERROR)
+            return []
+
+    def _check_url_valid(self, url: str) -> bool:
+        """
+        检查 URL 是否可用（通过 HEAD 请求）
+
+        Args:
+            url: 要检查的 URL
+
+        Returns:
+            URL 是否可用
+        """
+        if not url:
+            return False
+
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.head(url, headers=headers, timeout=5, allow_redirects=True)
+            xbmc.log(f"plugin.audio.music: URL检查 {url[:50]}... 状态码: {response.status_code}", xbmc.LOGDEBUG)
+            return response.status_code == 200
+        except Exception as e:
+            xbmc.log(f"plugin.audio.music: URL检查失败: {str(e)}", xbmc.LOGWARNING)
+            return False
+
+    def _get_song_info_from_netease(self, song_id: str) -> dict:
+        """
+        从网易云获取歌曲信息（用于搜索回退）
+
+        Args:
+            song_id: 歌曲ID
+
+        Returns:
+            歌曲信息字典 {'name': song_name, 'artist': artist_name}
+        """
+        try:
+            xbmc.log(f"plugin.audio.music: 从网易云获取歌曲信息 id={song_id}", xbmc.LOGDEBUG)
+            data = self.songs_detail([song_id])
+
+            if data and 'songs' in data and len(data['songs']) > 0:
+                song = data['songs'][0]
+                song_name = song.get('name', '')
+                artist_list = song.get('ar', [])
+                artist_name = ', '.join([ar.get('name', '') for ar in artist_list]) if artist_list else ''
+
+                xbmc.log(f"plugin.audio.music: 从网易云获取歌曲信息成功: name={song_name}, artist={artist_name}", xbmc.LOGDEBUG)
+                return {'name': song_name, 'artist': artist_name}
+            else:
+                xbmc.log(f"plugin.audio.music: 从网易云获取歌曲信息失败: 未找到歌曲", xbmc.LOGWARNING)
+                return {}
+        except Exception as e:
+            xbmc.log(f"plugin.audio.music: 从网易云获取歌曲信息异常: {str(e)}", xbmc.LOGERROR)
+            return {}
+
+    def _search_and_retry_lxmusic(self, song_id: str, song_name: str, artist_name: str,
+                                  target_source: str, quality: str) -> str:
+        """
+        通过搜索 API 获取新的歌曲 ID，然后重新调用 LXMUSIC API
+
+        按照顺序尝试不同的音源: kuwo, tencent, migu, kugou, netease
+
+        Args:
+            song_id: 原始歌曲 ID
+            song_name: 歌曲名称
+            artist_name: 歌手名称
+            target_source: 目标音源 (LXMUSIC 标识符，如 wy/tx/mg/kg/kw)
+            quality: 音质
+
+        Returns:
+            播放链接，失败返回空字符串
+        """
+        # 定义搜索回退的音源顺序（优先使用其他音源）
+        search_sources_order = ['kuwo', 'tencent', 'migu', 'kugou', 'netease']
+
+        # 音源映射（搜索 API 音源 → LXMUSIC 音源标识符）
+        source_mapping = {
+            'kuwo': 'kw',
+            'tencent': 'tx',
+            'migu': 'mg',
+            'kugou': 'kg',
+            'netease': 'wy'
+        }
+
+        xbmc.log(f"plugin.audio.music: 开始搜索回退: song_id={song_id}, song_name={song_name}, artist={artist_name}, 原始源={target_source}", xbmc.LOGDEBUG)
+
+        # 如果没有提供歌曲名称或歌手名称，尝试从网易云获取
+        if not song_name and not artist_name:
+            xbmc.log(f"plugin.audio.music: 未提供歌曲信息，尝试从网易云获取", xbmc.LOGDEBUG)
+            song_info = self._get_song_info_from_netease(song_id)
+            if song_info:
+                song_name = song_info.get('name', '')
+                artist_name = song_info.get('artist', '')
+                xbmc.log(f"plugin.audio.music: 从网易云获取到歌曲信息: name={song_name}, artist={artist_name}", xbmc.LOGDEBUG)
+
+        # 如果仍然没有歌曲信息，无法进行搜索回退
+        if not song_name and not artist_name:
+            xbmc.log(f"plugin.audio.music: 无法获取歌曲信息，跳过搜索回退", xbmc.LOGWARNING)
+            return ''
+
+        # 构建搜索关键词
+        if song_name and artist_name:
+            keyword = f"{song_name} {artist_name}"
+        elif song_name:
+            keyword = song_name
+        else:
+            keyword = str(song_id)
+
+        xbmc.log(f"plugin.audio.music: 搜索关键词: {keyword}", xbmc.LOGDEBUG)
+
+        # 按照顺序尝试每个音源
+        for search_source in search_sources_order:
+            lxmusic_source = source_mapping.get(search_source)
+            if not lxmusic_source:
+                xbmc.log(f"plugin.audio.music: 跳过不支持的音源: {search_source}", xbmc.LOGDEBUG)
+                continue
+
+            xbmc.log(f"plugin.audio.music: 尝试音源: {search_source} -> {lxmusic_source}", xbmc.LOGDEBUG)
+
+            try:
+                # 在当前音源中搜索歌曲
+                search_results = self._search_music_by_name(keyword, search_source, limit=3)
+
+                if not search_results:
+                    xbmc.log(f"plugin.audio.music: 音源 {search_source} 未找到搜索结果", xbmc.LOGDEBUG)
+                    continue
+
+                xbmc.log(f"plugin.audio.music: 音源 {search_source} 找到 {len(search_results)} 首歌曲", xbmc.LOGDEBUG)
+
+                # 尝试每个搜索结果
+                for song in search_results:
+                    new_song_id = song.get('id')
+                    if not new_song_id:
+                        continue
+
+                    xbmc.log(f"plugin.audio.music: 尝试搜索结果: id={new_song_id}, name={song.get('name')}, artist={song.get('artist')}", xbmc.LOGDEBUG)
+
+                    try:
+                        # 使用新的歌曲 ID 调用 LXMUSIC API
+                        new_url = self._lxmusic_get_music_url(lxmusic_source, new_song_id, quality)
+
+                        if new_url:
+                            # 检查 URL 是否可用
+                            if self._check_url_valid(new_url):
+                                xbmc.log(f"plugin.audio.music: 搜索回退成功: 原ID={song_id} -> 新ID={new_song_id}, 音源={search_source}, URL={new_url}", xbmc.LOGINFO)
+                                return new_url
+                            else:
+                                xbmc.log(f"plugin.audio.music: 搜索回退URL不可用: {new_url}", xbmc.LOGWARNING)
+                    except Exception as e:
+                        xbmc.log(f"plugin.audio.music: 搜索回退尝试失败: {str(e)}", xbmc.LOGWARNING)
+                        continue
+
+                # 如果当前音源的所有搜索结果都失败，尝试下一个音源
+                xbmc.log(f"plugin.audio.music: 音源 {search_source} 所有搜索结果均失败，尝试下一个音源", xbmc.LOGDEBUG)
+
+            except Exception as e:
+                xbmc.log(f"plugin.audio.music: 音源 {search_source} 搜索异常: {str(e)}", xbmc.LOGERROR)
+                continue
+
+        xbmc.log(f"plugin.audio.music: 搜索回退所有音源均失败", xbmc.LOGWARNING)
+        return ''
