@@ -5,6 +5,7 @@ import sys
 import time
 import requests
 import re
+import hashlib
 from urllib.parse import urlparse
 from encrypt import encrypted_request
 from xbmcswift2 import xbmc, xbmcaddon, xbmcplugin # type: ignore
@@ -20,6 +21,30 @@ DEFAULT_TIMEOUT = 10
 
 BASE_URL = "https://music.163.com"
 TUNEHUB_API = "https://music-dl.sayqz.com/api/"
+
+# LXMUSIC API 配置
+LXMUSIC_API_URL = 'https://88.lxmusic.xn--fiqs8s'
+LXMUSIC_API_KEY = 'lxmusic'
+LXMUSIC_SECRET_KEY = 'JaJ?a7Nwk_Fgj?2o:znAkst'
+LXMUSIC_SCRIPT_MD5 = '1888f9865338afe6d5534b35171c61a4'
+LXMUSIC_VERSION = 4
+
+# LXMUSIC 音源映射
+LXMUSIC_SOURCE_MAPPING = {
+    'netease': 'wy',
+    'tencent': 'tx',
+    'migu': 'mg',
+    'kugou': 'kg',
+    'kuwo': 'kw',
+    'joox': 'jm',
+    'deezer': 'dp',
+    'ximalaya': 'xm',
+    'apple': 'ap',
+    'spotify': 'sp',
+    'ytmusic': 'yt',
+    'qobuz': 'qd',
+    'tidal': 'td'
+}
 
 PROFILE = xbmc.translatePath(xbmcaddon.Addon().getAddonInfo('profile'))
 if not os.path.exists(PROFILE):
@@ -385,7 +410,7 @@ class NetEase(object):
     def songs_url_v1(self, ids, level, source='netease'):
         path = "/weapi/song/enhance/player/url/v1"
 
-        # 先使用 TuneHub 逐条获取播放地址，缺失的再回退到网易云原接口
+        # 解析 ids 参数
         try:
             if isinstance(ids, str):
                 try:
@@ -402,37 +427,66 @@ class NetEase(object):
         except Exception:
             ids_list = [ids]
 
-        xbmc.log("plugin.audio.music: songs_url_v1 ids_list={}".format(ids_list), xbmc.LOGDEBUG)
+        xbmc.log("plugin.audio.music: songs_url_v1 ids_list={} level={} source={}".format(ids_list, level, source), xbmc.LOGDEBUG)
         result_data = []
         missing_ids = []
+
+        # 获取 LXMUSIC 音源标识符
+        lxmusic_source = LXMUSIC_SOURCE_MAPPING.get(source)
+        quality = self._convert_level_to_quality(level)
+
+        xbmc.log("plugin.audio.music: LXMUSIC source mapping: {} -> {}, quality: {} -> {}".format(
+            source, lxmusic_source, level, quality), xbmc.LOGDEBUG)
+
         for _id in ids_list:
             url = None
-            try:
-                xbmc.log("plugin.audio.music: songs_url_v1 trying TuneHub id={}".format(_id), xbmc.LOGDEBUG)
-                tun = self.tunehub_url(_id, source=source)
-                xbmc.log("plugin.audio.music: songs_url_v1 tunehub raw for id={} -> {}".format(_id, tun), xbmc.LOGDEBUG)
-                if isinstance(tun, dict):
-                    if 'url' in tun:
-                        url = tun.get('url')
-                    elif 'data' in tun:
-                        d = tun.get('data')
-                        if isinstance(d, dict):
-                            url = d.get('url')
-                        elif isinstance(d, list) and len(d) > 0:
-                            url = d[0].get('url') if isinstance(d[0], dict) else None
-                elif isinstance(tun, str):
-                    url = tun
-            except Exception:
-                url = None
+            used_source = None
 
-            xbmc.log("plugin.audio.music: songs_url_v1 tunehub resolved id={} url={}".format(_id, url), xbmc.LOGDEBUG)
-            result_data.append({'id': _id, 'url': url, 'level': level})
+            # 1. 如果 source 支持,优先使用 LXMUSIC API
+            if lxmusic_source:
+                try:
+                    xbmc.log("plugin.audio.music: songs_url_v1 trying LXMUSIC id={} source={}".format(_id, lxmusic_source), xbmc.LOGDEBUG)
+                    url = self._lxmusic_get_music_url(lxmusic_source, str(_id), quality)
+                    if url:
+                        used_source = 'lxmusic'
+                        xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
+                except Exception as e:
+                    xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
+                    url = None
+
+            # 2. 如果 LXMUSIC 失败或 source 是 netease，尝试 TuneHub
+            if not url:
+                try:
+                    xbmc.log("plugin.audio.music: songs_url_v1 trying TuneHub id={}".format(_id), xbmc.LOGDEBUG)
+                    tun = self.tunehub_url(_id, source=source)
+                    if isinstance(tun, dict):
+                        if 'url' in tun:
+                            url = tun.get('url')
+                        elif 'data' in tun:
+                            d = tun.get('data')
+                            if isinstance(d, dict):
+                                url = d.get('url')
+                            elif isinstance(d, list) and len(d) > 0:
+                                url = d[0].get('url') if isinstance(d[0], dict) else None
+                    elif isinstance(tun, str):
+                        url = tun
+
+                    if url:
+                        used_source = 'tunehub'
+                        xbmc.log("plugin.audio.music: songs_url_v1 TuneHub success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
+                except Exception as e:
+                    xbmc.log("plugin.audio.music: songs_url_v1 TuneHub failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
+                    url = None
+
+            xbmc.log("plugin.audio.music: songs_url_v1 id={} url={} used_source={}".format(_id, url, used_source), xbmc.LOGDEBUG)
+            result_data.append({'id': _id, 'url': url, 'level': level, 'source': used_source})
+
             if not url:
                 missing_ids.append(_id)
 
         # 回退网易原始接口以获取剩余的播放地址
         if missing_ids:
-            xbmc.log("plugin.audio.music: songs_url_v1 missing_ids after TuneHub: {}".format(missing_ids), xbmc.LOGDEBUG)
+            xbmc.log("plugin.audio.music: songs_url_v1 missing_ids after LXMUSIC/TuneHub: {}".format(missing_ids), xbmc.LOGDEBUG)
             try:
                 if level == 'dolby':
                     netease_params = dict(ids=missing_ids if isinstance(ids, (list, tuple)) else json.dumps(missing_ids), level='hires', effects='["dolby"]', encodeType='mp4')
@@ -452,6 +506,7 @@ class NetEase(object):
                             try:
                                 if str(rd.get('id')) == str(nid) and (not rd.get('url')) and nurl:
                                     rd['url'] = nurl
+                                    rd['source'] = 'netease'
                                     xbmc.log("plugin.audio.music: songs_url_v1 backfilled id={} url={}".format(nid, nurl), xbmc.LOGDEBUG)
                                     break
                             except Exception:
@@ -460,6 +515,7 @@ class NetEase(object):
                 xbmc.log("plugin.audio.music: songs_url_v1 netease fallback failed: {}".format(e), xbmc.LOGERROR)
                 pass
 
+        xbmc.log("plugin.audio.music: songs_url_v1 final result_data={}".format(result_data), xbmc.LOGDEBUG)
         return {'data': result_data}
 
     def tunehub_request(self, params):
@@ -1053,3 +1109,200 @@ class NetEase(object):
         params = dict(startTime=startTime,
                       endTime=endTime, type=1, limit=limit)
         return self.request("POST", path, params)
+
+    # ========== LXMUSIC API 集成 ==========
+
+    @staticmethod
+    def _lxmusic_sha256(message: str) -> str:
+        """
+        SHA256 哈希函数（用于 LXMUSIC API）
+
+        Args:
+            message: 待哈希的字符串
+
+        Returns:
+            SHA256 哈希值的十六进制字符串
+        """
+        return hashlib.sha256(message.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def _lxmusic_generate_sign(request_path: str) -> str:
+        """
+        生成 LXMUSIC API 请求签名
+
+        签名算法: SHA256(requestPath + SCRIPT_MD5 + SECRET_KEY)
+
+        Args:
+            request_path: 请求路径
+
+        Returns:
+            签名字符串
+        """
+        return NetEase._lxmusic_sha256(request_path + LXMUSIC_SCRIPT_MD5 + LXMUSIC_SECRET_KEY)
+
+    @staticmethod
+    def _lxmusic_make_request(url: str, timeout: int = 10) -> dict:
+        """
+        发送 LXMUSIC API HTTP 请求
+
+        Args:
+            url: 完整的请求 URL
+            timeout: 超时时间（秒）
+
+        Returns:
+            响应 JSON 数据
+
+        Raises:
+            Exception: 请求失败或响应解析失败
+        """
+        headers = {
+            'accept': 'application/json',
+            'x-request-key': LXMUSIC_API_KEY,
+            'user-agent': 'lx-music-mobile/2.0.0'
+        }
+
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+
+            # 检查 HTTP 状态码
+            if response.status_code == 404:
+                raise Exception('LXMUSIC API端点不存在')
+            elif response.status_code >= 500:
+                raise Exception(f'LXMUSIC 服务器错误 ({response.status_code})')
+
+            # 解析 JSON 响应
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                raise Exception('LXMUSIC 响应解析失败: 无效的 JSON 格式')
+
+            return data
+
+        except requests.exceptions.Timeout:
+            raise Exception('LXMUSIC 请求超时')
+        except requests.exceptions.ConnectionError:
+            raise Exception('LXMUSIC 连接失败，请检查网络')
+        except requests.exceptions.RequestException as e:
+            raise Exception(f'LXMUSIC 请求失败: {str(e)}')
+
+    @staticmethod
+    def _lxmusic_get_music_url_single(source: str, songmid: str, quality: str, timeout: int = 10) -> str:
+        """
+        单次尝试从 LXMUSIC API 获取音乐播放链接
+
+        Args:
+            source: LXMUSIC 音源标识符 (wy/tx/mg/kg/kw/jm/dp/xm/ap/sp/yt/qd/td)
+            songmid: 歌曲ID
+            quality: 音质 (128k/320k/flac/flac24bit/hires/atmos/atmos_plus/master)
+            timeout: 超时时间（秒）
+
+        Returns:
+            播放链接字符串，失败返回空字符串
+
+        Raises:
+            Exception: 获取失败
+        """
+        # 构建请求路径
+        request_path = f'/lxmusicv4/url/{source}/{songmid}/{quality}'
+        sign = NetEase._lxmusic_generate_sign(request_path)
+        url = f'{LXMUSIC_API_URL}{request_path}?sign={sign}'
+
+        xbmc.log(f"plugin.audio.music: LXMUSIC 请求 URL: {url}", xbmc.LOGDEBUG)
+
+        # 发送请求
+        data = NetEase._lxmusic_make_request(url, timeout)
+
+        xbmc.log(f"plugin.audio.music: LXMUSIC 响应数据: {data}", xbmc.LOGDEBUG)
+
+        # 检查响应数据
+        if not data or 'code' not in data:
+            raise Exception('LXMUSIC 无效的响应数据')
+
+        code = data.get('code')
+
+        # 检查业务状态码
+        if code in [0, 200]:
+            music_url = data.get('data') or data.get('url')
+            if music_url:
+                xbmc.log(f"plugin.audio.music: LXMUSIC 获取播放链接成功: {music_url}", xbmc.LOGDEBUG)
+                return music_url
+            else:
+                raise Exception('LXMUSIC 响应中未找到有效的URL')
+        elif code == 403:
+            raise Exception('LXMUSIC Key失效/鉴权失败')
+        elif code == 429:
+            raise Exception('LXMUSIC 请求过速，请稍后再试')
+        else:
+            error_msg = data.get('msg') or data.get('message') or '未知错误'
+            raise Exception(f'LXMUSIC 错误: {error_msg}')
+
+    def _lxmusic_get_music_url(self, source: str, songmid: str, quality: str,
+                              max_retries: int = 3, timeout: int = 10) -> str:
+        """
+        从 LXMUSIC API 获取音乐播放链接（带重试机制）
+
+        Args:
+            source: LXMUSIC 音源标识符
+            songmid: 歌曲ID
+            quality: 音质
+            max_retries: 最大重试次数
+            timeout: 超时时间（秒）
+
+        Returns:
+            播放链接字符串，失败返回空字符串
+        """
+        if not songmid:
+            xbmc.log("plugin.audio.music: LXMUSIC songmid 不能为空", xbmc.LOGWARNING)
+            return ''
+
+        # 带重试机制的请求
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                xbmc.log(f"plugin.audio.music: LXMUSIC 尝试 {attempt + 1}/{max_retries} 获取播放链接", xbmc.LOGDEBUG)
+                url = self._lxmusic_get_music_url_single(source, songmid, quality, timeout)
+                if url:
+                    return url
+            except Exception as e:
+                last_error = e
+                xbmc.log(f"plugin.audio.music: LXMUSIC 尝试 {attempt + 1} 失败: {str(e)}", xbmc.LOGWARNING)
+
+                # 如果是 429 错误（请求过速），使用指数退避
+                if '429' in str(e) and attempt < max_retries - 1:
+                    backoff_time = min(2 ** attempt, 10)  # 最多等待 10 秒
+                    time.sleep(backoff_time)
+                    continue
+
+                # 其他错误直接抛出
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # 短暂等待后重试
+                else:
+                    raise
+
+        # 所有重试都失败
+        if last_error:
+            xbmc.log(f"plugin.audio.music: LXMUSIC 所有重试失败: {str(last_error)}", xbmc.LOGERROR)
+
+        return ''
+
+    def _convert_level_to_quality(self, level: str) -> str:
+        """
+        将网易云的 level 转换为 LXMUSIC 的 quality
+
+        Args:
+            level: 网易云音质级别 (standard/exceed/high/lossless/hires/dolby/jyeffect/jymaster)
+
+        Returns:
+            LXMUSIC 音质标识符 (128k/320k/flac/flac24bit/hires/atmos/atmos_plus/master)
+        """
+        level_mapping = {
+            'standard': '128k',
+            'exceed': '320k',
+            'high': '320k',
+            'lossless': 'flac',
+            'hires': 'flac24bit',
+            'dolby': 'atmos',
+            'jyeffect': 'flac',
+            'jymaster': 'master'
+        }
+        return level_mapping.get(level, '320k')
