@@ -960,7 +960,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
                 '播放失败', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
         else:
             if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
-                music.daka(song_id, time=dt)
+                music.daka(song_id, sourceId=sourceId, time=dt)
     elif meida_type == 'dj':
         result = music.dj_detail(song_id)
         song_id = result.get('program', {}).get('mainSong', {}).get('id')
