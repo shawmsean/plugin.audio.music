@@ -115,6 +115,102 @@ def save_history(history):
     with xbmcvfs.File(HISTORY_FILE, 'w') as f:
         f.write(json.dumps(history, ensure_ascii=False))
 
+def build_music_listitem(song_info, media_type='song'):
+    """
+    统一构建 Kodi 音乐 ListItem（支持所有音乐源）
+    song_info: 标准化后的歌曲 dict
+    media_type: 'song' / 'mv'
+    """
+
+    # --- 1. 基础字段提取（兼容所有平台） ---
+    title = (
+        song_info.get('name')
+        or song_info.get('title')
+        or ''
+    )
+
+    # artists 兼容 Netease(ar) / QQ(singer) / Kuwo(artist) / Kugou(singers)
+    artists = (
+        song_info.get('ar')
+        or song_info.get('artists')
+        or song_info.get('singer')
+        or song_info.get('singers')
+        or []
+    )
+
+    # artists 可能是 list[dict] 或 list[str]
+    if isinstance(artists, list):
+        artist_names = [
+            a.get('name') if isinstance(a, dict) else a
+            for a in artists
+            if a
+        ]
+    else:
+        artist_names = [artists]
+
+    artist = "/".join(artist_names)
+
+    # album 兼容 al / album / alb / albumName
+    album = (
+        (song_info.get('al') or song_info.get('album') or {}).get('name')
+        if isinstance(song_info.get('al') or song_info.get('album'), dict)
+        else song_info.get('album')
+        or song_info.get('alb')
+        or song_info.get('albumName')
+        or ''
+    )
+
+    # duration 兼容 dt(ms) / duration(ms) / time(s)
+    duration = (
+        song_info.get('dt')
+        or song_info.get('duration')
+        or song_info.get('time')
+        or 0
+    )
+    if duration > 10000:  # 毫秒 → 秒
+        duration = duration // 1000
+
+    # 封面图兼容 al.picUrl / album.picUrl / cover / pic / img
+    pic = (
+        (song_info.get('al') or song_info.get('album') or {}).get('picUrl')
+        if isinstance(song_info.get('al') or song_info.get('album'), dict)
+        else song_info.get('pic')
+        or song_info.get('cover')
+        or song_info.get('img')
+        or None
+    )
+
+    # --- 2. 构建 ListItem ---
+    listitem = xbmcgui.ListItem(label=title or '')
+
+    # --- 3. 设置 art（必须，否则 icon 不显示） ---
+    if pic:
+        listitem.setArt({
+            'thumb': pic,
+            'icon': pic,
+            'poster': pic,
+            'fanart': pic
+        })
+
+    # --- 4. 设置 InfoTagMusic ---
+    tag = listitem.getMusicInfoTag()
+    tag.setTitle(title or '')
+    tag.setArtist(artist or '')
+    tag.setAlbum(album or '')
+    tag.setDuration(duration)
+    tag.setMediaType(media_type)
+
+    # cu.lrclyrics 依赖字段
+    tag.setProperty('IsSong', 'true')
+    tag.setProperty('IsInternetStream', 'true')
+
+    # --- 5. 设置数据库 ID（如果有） ---
+    sid = song_info.get('id') or song_info.get('songid') or song_info.get('songId')
+    if sid and str(sid).isdigit():
+        tag.setDatabaseId(int(sid))
+
+    return listitem
+
 @plugin.route('/login/')
 def login():
     keyboard = xbmc.Keyboard('', '请输入手机号或邮箱')
@@ -991,27 +1087,29 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
                 try:
                     resp = music.songs_detail([song_id])
                     song_info = resp.get('songs', [])[0]
-                    title = song_info.get('name')
-                    artists = song_info.get('ar') or song_info.get('artists') or []
-                    artist = "/".join([a.get('name') for a in artists if a.get('name')])
-                    album = (song_info.get('al') or song_info.get('album') or {}).get('name')
-                    duration = song_info.get('dt') or song_info.get('duration')
-                    pic=song_info.get('al') or song_info.get('album') or {}
-                    listitem = xbmcgui.ListItem(label=title or '')
-                    music_tag = listitem.getMusicInfoTag()
-                    music_tag.setTitle(title or '')
-                    music_tag.setArtist(artist or '')
-                    music_tag.setAlbum(album or '')
-                    music_tag.setDuration((duration // 1000) if isinstance(duration, int) else 0)
-                    music_tag.setArtistImage(pic.get('picUrl'))
-                    music_tag.setAlbumImage(pic.get('picUrl'))
-                    music_tag.setAlbumType('album')
-                    music_tag.setMediaType('song')
-                    music_tag.setProperty('IsSong', 'true')
-                    music_tag.setProperty('IsInternetStream', 'ture')
-                    if song_id and str(song_id).isdigit():
-                        music_tag.setDatabaseId(int(song_id))
+                    # title = song_info.get('name')
+                    # artists = song_info.get('ar') or song_info.get('artists') or []
+                    # artist = "/".join([a.get('name') for a in artists if a.get('name')])
+                    # album = (song_info.get('al') or song_info.get('album') or {}).get('name')
+                    # duration = song_info.get('dt') or song_info.get('duration')
+                    # pic=song_info.get('al') or song_info.get('album') or {}
+                    listitem = build_music_listitem(song_info)
+                    # listitem = xbmcgui.ListItem(label=title or '')
+                    # music_tag = listitem.getMusicInfoTag()
+                    # music_tag.setTitle(title or '')
+                    # music_tag.setArtist(artist or '')
+                    # music_tag.setAlbum(album or '')
+                    # music_tag.setDuration((duration // 1000) if isinstance(duration, int) else 0)
+                    # music_tag.setArtistImage(pic.get('picUrl'))
+                    # music_tag.setAlbumImage(pic.get('picUrl'))
+                    # music_tag.setAlbumType('album')
+                    # music_tag.setMediaType('song')
+                    # music_tag.setProperty('IsSong', 'true')
+                    # music_tag.setProperty('IsInternetStream', 'ture')
+                    # if song_id and str(song_id).isdigit():
+                    #     music_tag.setDatabaseId(int(song_id))
                 except Exception:
+                    xbmc.log('Failed to build music listitem', xbmc.LOGERROR)
                     listitem = xbmcgui.ListItem()
             elif meida_type == 'mv':
                 try:
