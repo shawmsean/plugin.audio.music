@@ -466,10 +466,6 @@ def get_songs(songs, privileges=[], picUrl=None, source=''):
         else:
             artist = "未知艺术家"
             artists = []
-            # if 'simpleSong' in tempSong and 'ar' not in song and 'artist' in tempSong and tempSong['artist']!='':
-            #     artist = tempSong['artist']
-            # else:
-            #     artist = "未知艺术家"
         data['artist'] = artist
         data['artists'] = artists
 
@@ -857,20 +853,6 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
     return items
 
 
-# @plugin.route('/to_artist/<artists>/')
-# def to_artist(artists):
-#     artists = json.loads(artists)
-#     if len(artists) == 1:
-#         plugin.log.info(f"artists = {artists}")
-
-#         xbmc.executebuiltin('Container.Update(%s)' % plugin.url_for('artist', id=artists[0][1]))
-#         plugin.log.info(f"artists = {artists}")
-
-#         return
-#     sel = xbmcgui.Dialog().select('选择要跳转的歌手', [a[0] for a in artists])
-#     if sel < 0:
-#         return
-#     xbmc.executebuiltin('Container.Update(%s)' % plugin.url_for('artist', id=artists[sel][1]))
 @plugin.route('/to_artist/<artists>/')
 def to_artist(artists):
     artists = json.loads(artists)
@@ -1075,9 +1057,6 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
         result = music.mlog_detail(mv_id, r)
         url = result.get('data', {}).get('resource', {}).get('content', {}).get('video', {}).get('urlInfo', {}).get('url')
 
-    # else:
-    #     music.daka(song_id,sourceId,dt)
-
     # 当通过皮肤小部件直接启动播放时，Kodi 可能不会携带原始列表项的 metadata。
     # 因此在此处构建一个包含信息的 ListItem 并显式设置 resolved url，确保播放器显示正确的歌曲/视频信息。
     try:
@@ -1087,27 +1066,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
                 try:
                     resp = music.songs_detail([song_id])
                     song_info = resp.get('songs', [])[0]
-                    # title = song_info.get('name')
-                    # artists = song_info.get('ar') or song_info.get('artists') or []
-                    # artist = "/".join([a.get('name') for a in artists if a.get('name')])
-                    # album = (song_info.get('al') or song_info.get('album') or {}).get('name')
-                    # duration = song_info.get('dt') or song_info.get('duration')
-                    # pic=song_info.get('al') or song_info.get('album') or {}
                     listitem = build_music_listitem(song_info)
-                    # listitem = xbmcgui.ListItem(label=title or '')
-                    # music_tag = listitem.getMusicInfoTag()
-                    # music_tag.setTitle(title or '')
-                    # music_tag.setArtist(artist or '')
-                    # music_tag.setAlbum(album or '')
-                    # music_tag.setDuration((duration // 1000) if isinstance(duration, int) else 0)
-                    # music_tag.setArtistImage(pic.get('picUrl'))
-                    # music_tag.setAlbumImage(pic.get('picUrl'))
-                    # music_tag.setAlbumType('album')
-                    # music_tag.setMediaType('song')
-                    # music_tag.setProperty('IsSong', 'true')
-                    # music_tag.setProperty('IsInternetStream', 'ture')
-                    # if song_id and str(song_id).isdigit():
-                    #     music_tag.setDatabaseId(int(song_id))
                 except Exception:
                     xbmc.log('Failed to build music listitem', xbmc.LOGERROR)
                     listitem = xbmcgui.ListItem()
@@ -1339,9 +1298,6 @@ def history_page(filter):
 # 主目录
 @plugin.route('/')
 def index():
-    # if account['first_run']:
-    #     account['first_run'] = False
-    #     xbmcgui.Dialog().ok('使用提示', '在设置中登录账号以解锁更多功能')
     items = []
     status = account['logined']
 
@@ -1589,8 +1545,6 @@ def vip_timemachine():
         styles = (week['data'].get('listenCommonStyle', {})
                   or {}).get('styleDetailList', [])
         if styles:
-            # if plot_info:
-            #     plot_info += '\n'
             plot_info += '[B]常听曲风:[/B]' + '\n'
             for style in styles:
                 plot_info += tag(style['styleName'], 'blue') + tag(' %.2f%%' %
@@ -1598,8 +1552,6 @@ def vip_timemachine():
         emotions = (week['data'].get('musicEmotion', {})
                     or {}).get('subTitle', [])
         if emotions:
-            # if plot_info:
-            #     plot_info += '\n'
             plot_info += '[B]音乐情绪:[/B]' + '\n' + '你本周的音乐情绪是'
             emotions = [tag(e, 'pink') for e in emotions]
             if len(emotions) > 2:
