@@ -68,4 +68,15 @@
 		<setting id="like_tag" type="bool" label="30066" default="true"/>
 	</category>
 
+	<category label="30068">
+		<setting label="30069" type="lsep"/>
+		<setting id="cache_enabled" type="bool" label="30070" default="true"/>
+		<setting id="cache_expire_time" type="select" label="30071" default="3" lvalues="30072|30073|30074|30075|30076|30077"/>
+		<setting id="auto_clear_cache" type="bool" label="30078" default="true"/>
+		<setting id="auto_preload_cache" type="bool" label="30082" default="true"/>
+		<setting label="30079" type="action" action="RunPlugin(plugin://plugin.audio.music/clear_cache/)"/>
+		<setting label="30080" type="action" action="RunPlugin(plugin://plugin.audio.music/clear_expired_cache/)"/>
+		<setting label="30081" type="action" action="RunPlugin(plugin://plugin.audio.music/preload_cache/)"/>
+	</category>
+
 </settings>

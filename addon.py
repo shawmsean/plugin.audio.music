@@ -11,6 +11,7 @@ import xbmcvfs # type: ignore
 import qrcode # type: ignore
 from datetime import datetime
 import json
+from cache import get_cache_db  # 导入缓存模块
 try:
     xbmc.translatePath = xbmcvfs.translatePath
 except AttributeError:
@@ -179,6 +180,22 @@ def build_music_listitem(song_info, media_type='song'):
         or song_info.get('img')
         or None
     )
+
+    # --- 专辑封面缓存 ---
+    # 尝试从缓存获取专辑封面
+    try:
+        album_id = song_info.get('id') or song_info.get('songid') or song_info.get('songId')
+        if album_id and str(album_id).isdigit():
+            cache_db = get_cache_db()
+            cached_cover = cache_db.get_album_cover(int(album_id))
+            if cached_cover:
+                pic = cached_cover
+                xbmc.log('[plugin.audio.music] Using cached album cover: %s' % album_id, xbmc.LOGDEBUG)
+            elif pic:
+                # 缓存封面
+                cache_db.set_album_cover(int(album_id), pic)
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] Error handling album cover cache: %s' % str(e), xbmc.LOGERROR)
 
     # --- 2. 构建 ListItem ---
     listitem = xbmcgui.ListItem(label=title or '')
@@ -1299,6 +1316,14 @@ def history_page(filter):
 def index():
     items = []
     status = account['logined']
+
+    # 自动缓存预热
+    if xbmcplugin.getSetting(int(sys.argv[1]), 'auto_preload_cache') == 'true':
+        import threading
+        # 启动异步预热，不阻塞 UI
+        thread = threading.Thread(target=preload_cache_async, daemon=True)
+        thread.start()
+        xbmc.log('[plugin.audio.music] Auto cache preload started', xbmc.LOGINFO)
 
     liked_songs = safe_get_storage('liked_songs')
     if 'pid' not in liked_songs:
@@ -4197,6 +4222,162 @@ def debug_song_info():
     xbmc.log(f'[Music Debug] {info}', xbmc.LOGDEBUG)
 
     return []
+
+
+@plugin.route('/clear_cache/')
+def clear_cache():
+    """清理所有缓存"""
+    cache_db = get_cache_db()
+    stats = cache_db.get_stats()
+
+    dialog = xbmcgui.Dialog()
+    result = dialog.yesno(
+        '清理缓存',
+        f'确定要清理所有缓存吗？\n\n当前缓存统计：\n'
+        f'总缓存数：{stats["total_count"]} 条\n'
+        f'数据库大小：{stats["db_size"] / 1024:.2f} KB\n'
+        f'过期缓存：{stats["expired_count"]} 条',
+        '取消',
+        '确认'
+    )
+
+    if result:
+        deleted_count = cache_db.clear_all()
+        dialog.notification(
+            '清理缓存',
+            f'已清理 {deleted_count} 条缓存',
+            xbmcgui.NOTIFICATION_INFO,
+            2000,
+            False
+        )
+
+    return []
+
+
+@plugin.route('/clear_expired_cache/')
+def clear_expired_cache():
+    """清理过期缓存"""
+    cache_db = get_cache_db()
+    stats = cache_db.get_stats()
+
+    dialog = xbmcgui.Dialog()
+    if stats['expired_count'] == 0:
+        dialog.notification(
+            '清理过期缓存',
+            '没有过期缓存',
+            xbmcgui.NOTIFICATION_INFO,
+            2000,
+            False
+        )
+        return []
+
+    result = dialog.yesno(
+        '清理过期缓存',
+        f'确定要清理 {stats["expired_count"]} 条过期缓存吗？',
+        '取消',
+        '确认'
+    )
+
+    if result:
+        deleted_count = cache_db.clear_expired()
+        dialog.notification(
+            '清理过期缓存',
+            f'已清理 {deleted_count} 条过期缓存',
+            xbmcgui.NOTIFICATION_INFO,
+            2000,
+            False
+        )
+
+    return []
+
+
+@plugin.route('/preload_cache/')
+def preload_cache():
+    """
+    缓存预热 - 预加载常用数据
+    在插件启动时预加载常用数据，提高后续访问速度
+    """
+    dialog = xbmcgui.Dialog()
+    dialog.notification(
+        '缓存预热',
+        '正在后台预加载缓存...',
+        xbmcgui.NOTIFICATION_INFO,
+        2000,
+        False
+    )
+
+    # 启动异步预热线程
+    import threading
+    thread = threading.Thread(target=preload_cache_async, daemon=True)
+    thread.start()
+
+    return []
+
+
+def preload_cache_async():
+    """
+    异步缓存预热 - 后台执行，不阻塞 UI
+    """
+    cache_db = get_cache_db()
+    preload_results = []
+
+    try:
+        # 1. 预加载歌单分类标签
+        xbmc.log('[plugin.audio.music] [Async] Preloading: playlist_catelogs', xbmc.LOGINFO)
+        music.playlist_catelogs(use_cache=True)
+        preload_results.append('✓ 歌单分类标签')
+
+        # 2. 预加载推荐资源
+        xbmc.log('[plugin.audio.music] [Async] Preloading: recommend_resource', xbmc.LOGINFO)
+        music.recommend_resource(use_cache=True)
+        preload_results.append('✓ 推荐资源')
+
+        # 3. 预加载热门歌单（全部）
+        xbmc.log('[plugin.audio.music] [Async] Preloading: hot_playlists (全部)', xbmc.LOGINFO)
+        music.hot_playlists(category='全部', use_cache=True)
+        preload_results.append('✓ 热门歌单（全部）')
+
+        # 4. 预加载热门歌手
+        xbmc.log('[plugin.audio.music] [Async] Preloading: top_artists', xbmc.LOGINFO)
+        music.top_artists(use_cache=True)
+        preload_results.append('✓ 热门歌手')
+
+        # 5. 预加载热门 MV
+        xbmc.log('[plugin.audio.music] [Async] Preloading: top_mv', xbmc.LOGINFO)
+        music.top_mv(use_cache=True)
+        preload_results.append('✓ 热门 MV')
+
+        # 6. 预加载新碟上架
+        xbmc.log('[plugin.audio.music] [Async] Preloading: new_albums', xbmc.LOGINFO)
+        music.new_albums(use_cache=True)
+        preload_results.append('✓ 新碟上架')
+
+        # 7. 预加载新歌速递
+        xbmc.log('[plugin.audio.music] [Async] Preloading: new_songs', xbmc.LOGINFO)
+        music.new_songs(use_cache=True)
+        preload_results.append('✓ 新歌速递')
+
+        # 获取缓存统计
+        stats = cache_db.get_stats()
+
+        # 显示完成通知
+        xbmc.executebuiltin('Notification(%s, %s, %d)' % (
+            '缓存预热完成',
+            f'已预加载 {len(preload_results)} 项内容',
+            3000
+        ))
+
+        xbmc.log('[plugin.audio.music] [Async] Cache preload completed', xbmc.LOGINFO)
+        xbmc.log('[plugin.audio.music] [Async] Preload results: %s' % ', '.join(preload_results), xbmc.LOGINFO)
+        xbmc.log('[plugin.audio.music] [Async] Cache stats: %d items, %.2f KB' % (stats['total_count'], stats['db_size'] / 1024), xbmc.LOGINFO)
+
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] [Async] Cache preload error: %s' % str(e), xbmc.LOGERROR)
+        xbmc.executebuiltin('Notification(%s, %s, %d)' % (
+            '缓存预热失败',
+            str(e),
+            5000
+        ))
 
 
 if __name__ == '__main__':

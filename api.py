@@ -17,6 +17,14 @@ try:
 except AttributeError:
     pass
 
+# 导入缓存模块
+try:
+    from cache import get_cache_db
+    CACHE_AVAILABLE = True
+except ImportError:
+    CACHE_AVAILABLE = False
+    xbmc.log('[plugin.audio.music] Cache module not available', xbmc.LOGWARNING)
+
 DEFAULT_TIMEOUT = 10
 
 BASE_URL = "https://music.163.com"
@@ -231,9 +239,34 @@ class NetEase(object):
         # specialType:5 喜欢的歌曲; 200 视频歌单; 0 普通歌单
 
     # 每日推荐歌单
-    def recommend_resource(self):
+    def recommend_resource(self, use_cache=True):
+        """
+        获取推荐资源
+
+        Args:
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 推荐资源数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cached_data = cache_db.get('recommend_resource')
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached recommend_resource', xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/v1/discovery/recommend/resource"
-        return self.request("POST", path)
+        result = self.request("POST", path)
+
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set('recommend_resource', result, cache_type='recommend_resource')
+
+        return result
 
     # 每日推荐歌曲
     def recommend_playlist(self, total=True, offset=0, limit=20):
@@ -265,10 +298,38 @@ class NetEase(object):
         return self.request("POST", path, params)
 
     # 新碟上架
-    def new_albums(self, offset=0, limit=50):
+    def new_albums(self, offset=0, limit=50, use_cache=True):
+        """
+        获取新碟上架
+
+        Args:
+            offset: 偏移量
+            limit: 每页数量
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 新碟数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cache_key = cache_db.generate_cache_key('new_albums', offset, limit)
+            cached_data = cache_db.get(cache_key)
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached new_albums', xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/album/new"
         params = dict(area="ALL", offset=offset, total=True, limit=limit)
-        return self.request("POST", path, params)
+        result = self.request("POST", path, params)
+
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set(cache_key, result, cache_type='new_albums')
+
+        return result
 
     # 歌单（网友精选碟） hot||new http://music.163.com/#/discover/playlist/
     def top_playlists(self, category="全部", order="hot", offset=0, limit=50):
@@ -279,30 +340,141 @@ class NetEase(object):
         return self.request("POST", path, params)
     
         # 歌单（网友精选碟） hot||new http://music.163.com/#/discover/playlist/
-    def hot_playlists(self, category="全部", order="hot", offset=0, limit=50):
+    def hot_playlists(self, category="全部", order="hot", offset=0, limit=50, use_cache=True):
+        """
+        获取热门歌单
+
+        Args:
+            category: 分类标签
+            order: 排序方式
+            offset: 偏移量
+            limit: 每页数量
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 歌单数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cache_key = cache_db.generate_cache_key('hot_playlists', category, order, offset, limit)
+            cached_data = cache_db.get(cache_key)
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached hot_playlists: %s' % category, xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/playlist/list"
         params = dict(
             cat=category, order=order, offset=offset, total="true", limit=limit
         )
-        return self.request("POST", path, params)
+        result = self.request("POST", path, params)
 
-    def playlist_catelogs(self):
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set(cache_key, result, cache_type='hot_playlists')
+
+        return result
+
+    def playlist_catelogs(self, use_cache=True):
+        """
+        获取歌单分类标签
+
+        Args:
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 分类标签数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cached_data = cache_db.get('playlist_catelogs')
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached playlist_catelogs', xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/playlist/catalogue"
-        return self.request("POST", path)
+        result = self.request("POST", path)
+
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set('playlist_catelogs', result, cache_type='playlist_catelogs')
+
+        return result
 
     # 歌单详情
-    def playlist_detail(self, id, shareUserId=0):
+    def playlist_detail(self, id, shareUserId=0, use_cache=True):
+        """
+        获取歌单详情
+
+        Args:
+            id: 歌单 ID
+            shareUserId: 分享用户 ID
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 歌单详情数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cache_key = cache_db.generate_cache_key('playlist_detail', id)
+            cached_data = cache_db.get(cache_key)
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached playlist_detail: %s' % id, xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/v6/playlist/detail"
         params = dict(id=id, t=int(time.time()), n=1000,
                       s=5, shareUserId=shareUserId)
+        result = self.request("POST", path, params)
 
-        return (self.request("POST", path, params))
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set(cache_key, result, cache_type='playlist_detail')
+
+        return result
 
     # 热门歌手 http://music.163.com/#/discover/artist/
-    def top_artists(self, offset=0, limit=100, total=True):
+    def top_artists(self, offset=0, limit=100, total=True, use_cache=True):
+        """
+        获取热门歌手
+
+        Args:
+            offset: 偏移量
+            limit: 每页数量
+            total: 是否获取总数
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 热门歌手数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cache_key = cache_db.generate_cache_key('top_artists', offset, limit, total)
+            cached_data = cache_db.get(cache_key)
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached top_artists', xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/artist/top"
         params = dict(offset=offset, total=total, limit=limit)
-        return self.request("POST", path, params)
+        result = self.request("POST", path, params)
+
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set(cache_key, result, cache_type='top_artists')
+
+        return result
 
     # 歌手单曲
     def artists(self, artist_id):
@@ -939,10 +1111,38 @@ class NetEase(object):
         return self.request("POST", path)
 
     # 新歌速递 全部:0 华语:7 欧美:96 日本:8 韩国:16
-    def new_songs(self, areaId=0, total=True):
+    def new_songs(self, areaId=0, total=True, use_cache=True):
+        """
+        获取新歌速递
+
+        Args:
+            areaId: 地区 ID (0:全部, 7:华语, 96:欧美, 8:日本, 16:韩国)
+            total: 是否获取总数
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 新歌数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cache_key = cache_db.generate_cache_key('new_songs', areaId, total)
+            cached_data = cache_db.get(cache_key)
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached new_songs', xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/v1/discovery/new/songs"
         params = dict(areaId=areaId, total=total)
-        return self.request("POST", path, params)
+        result = self.request("POST", path, params)
+
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set(cache_key, result, cache_type='new_songs')
+
+        return result
 
     # 歌手MV
     def artist_mvs(self, id, offset=0, limit=50, total=True):
@@ -991,10 +1191,40 @@ class NetEase(object):
         return self.request("POST", path, params)
 
     # MV排行榜 area: 地区,可选值为内地,港台,欧美,日本,韩国,不填则为全部
-    def top_mv(self, area='', limit=50, offset=0, total=True):
+    def top_mv(self, area='', limit=50, offset=0, total=True, use_cache=True):
+        """
+        获取热门 MV
+
+        Args:
+            area: 地区
+            limit: 每页数量
+            offset: 偏移量
+            total: 是否获取总数
+            use_cache: 是否使用缓存 (默认 True)
+
+        Returns:
+            dict: 热门 MV 数据
+        """
+        # 尝试从缓存读取
+        if use_cache and CACHE_AVAILABLE:
+            cache_db = get_cache_db()
+            cache_key = cache_db.generate_cache_key('top_mv', area, limit, offset, total)
+            cached_data = cache_db.get(cache_key)
+            if cached_data is not None:
+                xbmc.log('[plugin.audio.music] Using cached top_mv', xbmc.LOGDEBUG)
+                return cached_data
+
+        # 从 API 获取数据
         path = "/weapi/mv/toplist"
         params = dict(area=area, limit=limit, offset=offset, total=total)
-        return self.request("POST", path, params)
+        result = self.request("POST", path, params)
+
+        # 写入缓存
+        if use_cache and CACHE_AVAILABLE and result:
+            cache_db = get_cache_db()
+            cache_db.set(cache_key, result, cache_type='top_mv')
+
+        return result
 
     def mlog_socialsquare(self, channelId=1001, pagenum=0):
         path = "/weapi/socialsquare/v1/get"
