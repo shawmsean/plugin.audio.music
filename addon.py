@@ -594,24 +594,24 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
     songs = get_songs(datas, privileges, picUrl, source)
     items = []
 
-    # 如果是歌单页面，在最前面插入一个“播放全部”
-    if source == 'playlist':
-        items.append({
-            'label': '▶ 播放全部',
-            'path': plugin.url_for(
-                'play_playlist_songs',
-                playlist_id=str(sourceId),
-                song_id='0',          # 这里先传 0，表示从第一首开始
-                mv_id='0',
-                dt='0'
-            ),
-            'is_playable': False,
-            'info': {
-                'mediatype': 'music',
-                'title': '播放全部',
-            },
-            'info_type': 'music',
-        })
+    # # 如果是歌单页面，在最前面插入一个“播放全部”
+    # if source == 'playlist':
+    #     items.append({
+    #         'label': '▶ 播放全部',
+    #         'path': plugin.url_for(
+    #             'play_playlist_songs',
+    #             playlist_id=str(sourceId),
+    #             song_id='0',          # 这里先传 0，表示从第一首开始
+    #             mv_id='0',
+    #             dt='0'
+    #         ),
+    #         'is_playable': False,
+    #         'info': {
+    #             'mediatype': 'music',
+    #             'title': '播放全部',
+    #         },
+    #         'info_type': 'music',
+    #     })
     # 推荐页面的播放全部按钮
     if source == 'recommend_songs' and widget == '0':
         items.append({
@@ -796,10 +796,9 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                     },
                 }
 
-                if source == 'recommend_songs'and widget == '0':
-
+                if source == 'recommend_songs':
                     if widget == '1':
-                        # ⭐ 小部件点击 → 播放整个推荐列表
+                        # ⭐ 小部件点击（widget == '1'） → 播放整个推荐列表
                         base_item['path'] = plugin.url_for(
                             'play_recommend_songs',
                             song_id=str(play['id']),
@@ -807,7 +806,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                             dt=str(play['dt']//1000)
                         )
                     else:
-                        # ⭐ 推荐页面点击 → 播单曲
+                        # ⭐ 推荐页面点击（widget == '0'） → 播单曲
                         base_item['path'] = plugin.url_for(
                             'play',
                             meida_type='song',
@@ -1339,6 +1338,7 @@ def index():
         items.append({'label': '排行榜', 'path': plugin.url_for('toplists')})
     if xbmcplugin.getSetting(int(sys.argv[1]), 'hot_playlists') == 'true':
         items.append({'label': '热门歌单', 'path': plugin.url_for('hot_playlists', offset='0')})
+        items.append({'label': '歌单分类', 'path': plugin.url_for('playlist_tags')})
     if xbmcplugin.getSetting(int(sys.argv[1]), 'top_artist') == 'true':
         items.append({'label': '热门歌手', 'path': plugin.url_for('top_artists')})
     if xbmcplugin.getSetting(int(sys.argv[1]), 'top_mv') == 'true':
@@ -1790,7 +1790,7 @@ def play_recommend_songs(song_id, mv_id, dt):
     if not songs:
         dialog = xbmcgui.Dialog()
         dialog.notification('播放失败', '无法获取每日推荐歌曲列表', xbmcgui.NOTIFICATION_INFO, 800, False)
-        return
+        return []
 
     # 构建播放列表
     playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
@@ -1868,6 +1868,9 @@ def play_recommend_songs(song_id, mv_id, dt):
                 print(f"[Play] 播放记录上传失败: {result.get('msg', '未知错误')}")
         except Exception as e:
             print(f"[Play] 播放记录上传异常: {str(e)}")
+
+    # ⭐ 返回空列表，避免 GetDirectory 失败
+    return []
 
 
   
@@ -1959,6 +1962,7 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
                 print(f"[Play Playlist] 播放记录上传失败: {result.get('msg', '未知错误')}")
         except Exception as e:
             print(f"[Play Playlist] 播放记录上传异常: {str(e)}")
+    return []
 
 
 
@@ -3734,6 +3738,101 @@ def tunehub_play(source, id, br='320k'):
 @plugin.route('/recommend_playlists/')
 def recommend_playlists():
     return get_playlists_items(music.recommend_resource().get("recommend", []))
+
+
+@plugin.route('/playlist_tags/')
+def playlist_tags():
+    """
+    显示歌单标签列表（文件夹形式）
+    """
+    # 获取标签列表
+    tags_data = music.playlist_catelogs()
+
+    if not tags_data:
+        dialog = xbmcgui.Dialog()
+        dialog.notification('错误', '获取歌单标签失败', xbmcgui.NOTIFICATION_ERROR, 2000, False)
+        return []
+
+    # tags_data 格式:
+    # {
+    #   "code": 200,
+    #   "all": {"name": "全部歌单", ...},
+    #   "sub": [{"name": "综艺", ...}, {"name": "流行", ...}, ...],
+    #   "categories": {"0": "语种", "1": "风格", "2": "场景", "3": "情感", "4": "主题"}
+    # }
+
+    # 获取分类映射
+    categories_map = tags_data.get('categories', {})
+    # 获取所有标签
+    tags = tags_data.get('sub', [])
+
+    items = []
+
+    # 添加"全部"选项
+    all_info = tags_data.get('all', {})
+    items.append({
+        'label': all_info.get('name', '全部歌单'),
+        'path': plugin.url_for('hot_playlists_by_tag', category='全部', offset='0'),
+        'is_playable': False
+    })
+
+    # 按分类组织标签
+    # categories_map: {"0": "语种", "1": "风格", "2": "场景", "3": "情感", "4": "主题"}
+    # tags 中的每个标签有 category 字段，对应 categories_map 的 key
+    tags_by_category = {}
+    for tag in tags:
+        category_id = str(tag.get('category', ''))
+        category_name = categories_map.get(category_id, '其他')
+
+        if category_name not in tags_by_category:
+            tags_by_category[category_name] = []
+        tags_by_category[category_name].append(tag)
+
+    # 按分类顺序添加标签
+    category_order = ['语种', '风格', '场景', '情感', '主题']
+    for category_name in category_order:
+        if category_name in tags_by_category:
+            for tag in tags_by_category[category_name]:
+                tag_name = tag.get('name', '')
+                if not tag_name:
+                    continue
+
+                # 构建标签 URL
+                url = plugin.url_for('hot_playlists_by_tag', category=tag_name, offset='0')
+
+                # 添加到列表
+                items.append({
+                    'label': tag_name,
+                    'path': url,
+                    'is_playable': False
+                })
+
+    return items
+
+
+@plugin.route('/hot_playlists_by_tag/<category>/<offset>/')
+def hot_playlists_by_tag(category, offset):
+    """
+    按标签显示热门歌单列表
+
+    Args:
+        category: 歌单分类标签
+        offset: 偏移量
+    """
+    offset = int(offset)
+    result = music.hot_playlists(category=category, offset=offset, limit=limit)
+    playlists = result.get('playlists', [])
+    items = get_playlists_items(playlists)
+
+    # 添加分页按钮
+    if len(playlists) >= limit:
+        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+            'hot_playlists_by_tag', category=category, offset=str(offset+limit))})
+
+    # 添加"返回分类"按钮
+    items.append({'label': '<< 返回分类', 'path': plugin.url_for('playlist_tags'), 'is_playable': False})
+
+    return items
 
 
 @plugin.route('/hot_playlists/<offset>/')
