@@ -84,6 +84,29 @@ class CacheDB:
             )
         ''')
 
+        # 播放历史记录表
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS play_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                song_id INTEGER NOT NULL,
+                song_name TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                artist_id INTEGER NOT NULL,
+                album TEXT NOT NULL,
+                album_id INTEGER NOT NULL,
+                pic TEXT,
+                duration INTEGER NOT NULL,
+                play_time INTEGER NOT NULL,
+                UNIQUE(song_id)
+            )
+        ''')
+
+        # 为 play_time 创建索引，方便按时间查询
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_play_history_play_time
+            ON play_history(play_time DESC)
+        ''')
+
         self.conn.commit()
 
     def get_cache_expire_seconds(self):
@@ -478,6 +501,186 @@ class CacheDB:
                 'db_size': 0
             }
 
+    # ==================== 播放历史记录方法 ====================
+
+    def add_play_history(self, song_id, song_name, artist, artist_id, album, album_id, pic, duration):
+        """
+        添加播放历史记录
+
+        Args:
+            song_id: 歌曲ID
+            song_name: 歌曲名称
+            artist: 艺术家名称
+            artist_id: 艺术家ID
+            album: 专辑名称
+            album_id: 专辑ID
+            pic: 封面图片URL
+            duration: 歌曲时长（秒）
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            play_time = int(time.time())
+            self.cursor.execute('''
+                INSERT OR REPLACE INTO play_history
+                (song_id, song_name, artist, artist_id, album, album_id, pic, duration, play_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (song_id, song_name, artist, artist_id, album, album_id, pic, duration, play_time))
+            self.conn.commit()
+            xbmc.log('[%s] Play history added: %s - %s' % (__addon_id__, artist, song_name), xbmc.LOGDEBUG)
+            return True
+        except Exception as e:
+            xbmc.log('[%s] Error adding play history: %s' % (__addon_id__, str(e)), xbmc.LOGERROR)
+            return False
+
+    def get_play_history(self, limit=None, days=None):
+        """
+        获取播放历史记录
+
+        Args:
+            limit: 限制返回数量，None 表示不限制
+            days: 限制天数（最近N天），None 表示不限制
+
+        Returns:
+            list: 历史记录列表，每个元素为 dict
+        """
+        try:
+            query = 'SELECT song_id, song_name, artist, artist_id, album, album_id, pic, duration, play_time FROM play_history'
+            params = []
+
+            if days is not None:
+                current_time = int(time.time())
+                cutoff_time = current_time - (days * 24 * 60 * 60)
+                query += ' WHERE play_time >= ?'
+                params.append(cutoff_time)
+
+            query += ' ORDER BY play_time DESC'
+
+            if limit is not None:
+                query += ' LIMIT ?'
+                params.append(limit)
+
+            self.cursor.execute(query, params)
+            rows = self.cursor.fetchall()
+
+            history = []
+            for row in rows:
+                history.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'artist': row[2],
+                    'artist_id': row[3],
+                    'album': row[4],
+                    'album_id': row[5],
+                    'pic': row[6],
+                    'dt': row[7],
+                    'time': row[8]
+                })
+
+            xbmc.log('[%s] Retrieved %d play history records' % (__addon_id__, len(history)), xbmc.LOGDEBUG)
+            return history
+
+        except Exception as e:
+            xbmc.log('[%s] Error getting play history: %s' % (__addon_id__, str(e)), xbmc.LOGERROR)
+            return []
+
+    def clear_play_history(self):
+        """
+        清空播放历史记录
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            self.cursor.execute('DELETE FROM play_history')
+            self.conn.commit()
+            xbmc.log('[%s] Play history cleared' % __addon_id__, xbmc.LOGINFO)
+            return True
+        except Exception as e:
+            xbmc.log('[%s] Error clearing play history: %s' % (__addon_id__, str(e)), xbmc.LOGERROR)
+            return False
+
+    def get_play_history_by_artist(self, artist):
+        """
+        获取指定艺术家的播放历史
+
+        Args:
+            artist: 艺术家名称
+
+        Returns:
+            list: 历史记录列表
+        """
+        try:
+            self.cursor.execute('''
+                SELECT song_id, song_name, artist, artist_id, album, album_id, pic, duration, play_time
+                FROM play_history
+                WHERE artist = ?
+                ORDER BY play_time DESC
+            ''', (artist,))
+            rows = self.cursor.fetchall()
+
+            history = []
+            for row in rows:
+                history.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'artist': row[2],
+                    'artist_id': row[3],
+                    'album': row[4],
+                    'album_id': row[5],
+                    'pic': row[6],
+                    'dt': row[7],
+                    'time': row[8]
+                })
+
+            xbmc.log('[%s] Retrieved %d play history records for artist: %s' % (__addon_id__, len(history), artist), xbmc.LOGDEBUG)
+            return history
+
+        except Exception as e:
+            xbmc.log('[%s] Error getting play history by artist: %s' % (__addon_id__, str(e)), xbmc.LOGERROR)
+            return []
+
+    def get_play_history_by_album(self, album):
+        """
+        获取指定专辑的播放历史
+
+        Args:
+            album: 专辑名称
+
+        Returns:
+            list: 历史记录列表
+        """
+        try:
+            self.cursor.execute('''
+                SELECT song_id, song_name, artist, artist_id, album, album_id, pic, duration, play_time
+                FROM play_history
+                WHERE album = ?
+                ORDER BY play_time DESC
+            ''', (album,))
+            rows = self.cursor.fetchall()
+
+            history = []
+            for row in rows:
+                history.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'artist': row[2],
+                    'artist_id': row[3],
+                    'album': row[4],
+                    'album_id': row[5],
+                    'pic': row[6],
+                    'dt': row[7],
+                    'time': row[8]
+                })
+
+            xbmc.log('[%s] Retrieved %d play history records for album: %s' % (__addon_id__, len(history), album), xbmc.LOGDEBUG)
+            return history
+
+        except Exception as e:
+            xbmc.log('[%s] Error getting play history by album: %s' % (__addon_id__, str(e)), xbmc.LOGERROR)
+            return []
+
     def close(self):
         """关闭数据库连接"""
         if self.cursor:
@@ -517,3 +720,80 @@ def set_cached_data(prefix, *args, **kwargs):
     cache_db = get_cache_db()
     cache_key = cache_db.generate_cache_key(prefix, *args)
     return cache_db.set(cache_key, **kwargs)
+
+
+# ==================== 播放历史记录管理 ====================
+
+def add_play_history(song_id, song_name, artist, artist_id, album, album_id, pic, duration):
+    """
+    添加播放历史记录
+
+    Args:
+        song_id: 歌曲ID
+        song_name: 歌曲名称
+        artist: 艺术家名称
+        artist_id: 艺术家ID
+        album: 专辑名称
+        album_id: 专辑ID
+        pic: 封面图片URL
+        duration: 歌曲时长（秒）
+
+    Returns:
+        bool: 是否成功
+    """
+    cache_db = get_cache_db()
+    return cache_db.add_play_history(song_id, song_name, artist, artist_id, album, album_id, pic, duration)
+
+
+def get_play_history(limit=None, days=None):
+    """
+    获取播放历史记录
+
+    Args:
+        limit: 限制返回数量，None 表示不限制
+        days: 限制天数（最近N天），None 表示不限制
+
+    Returns:
+        list: 历史记录列表，每个元素为 dict
+    """
+    cache_db = get_cache_db()
+    return cache_db.get_play_history(limit=limit, days=days)
+
+
+def clear_play_history():
+    """
+    清空播放历史记录
+
+    Returns:
+        bool: 是否成功
+    """
+    cache_db = get_cache_db()
+    return cache_db.clear_play_history()
+
+
+def get_play_history_by_artist(artist):
+    """
+    获取指定艺术家的播放历史
+
+    Args:
+        artist: 艺术家名称
+
+    Returns:
+        list: 历史记录列表
+    """
+    cache_db = get_cache_db()
+    return cache_db.get_play_history_by_artist(artist)
+
+
+def get_play_history_by_album(album):
+    """
+    获取指定专辑的播放历史
+
+    Args:
+        album: 专辑名称
+
+    Returns:
+        list: 历史记录列表
+    """
+    cache_db = get_cache_db()
+    return cache_db.get_play_history_by_album(album)

@@ -11,7 +11,7 @@ import xbmcvfs # type: ignore
 import qrcode # type: ignore
 from datetime import datetime
 import json
-from cache import get_cache_db  # 导入缓存模块
+from cache import get_cache_db, get_play_history, add_play_history, clear_play_history, get_play_history_by_artist, get_play_history_by_album  # 导入缓存模块和历史记录函数
 try:
     xbmc.translatePath = xbmcvfs.translatePath
 except AttributeError:
@@ -104,17 +104,54 @@ def delete_thumbnails():
 HISTORY_FILE = xbmc.translatePath('special://profile/addon_data/plugin.audio.music/history.json')
 
 def load_history():
-    if not xbmcvfs.exists(HISTORY_FILE):
-        return []
+    """
+    加载播放历史记录（从数据库）
+
+    Returns:
+        list: 历史记录列表
+    """
     try:
-        with xbmcvfs.File(HISTORY_FILE, 'r') as f:
-            return json.loads(f.read())
-    except:
-        return []
+        # 尝试从数据库加载
+        history = get_play_history()
+        if history:
+            return history
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] Error loading history from database: %s' % str(e), xbmc.LOGERROR)
+
+    # 如果数据库加载失败，尝试从旧的 JSON 文件加载（向后兼容）
+    if xbmcvfs.exists(HISTORY_FILE):
+        try:
+            with xbmcvfs.File(HISTORY_FILE, 'r') as f:
+                old_history = json.loads(f.read())
+                # 将旧数据迁移到数据库
+                for item in old_history:
+                    add_play_history(
+                        item.get('id'),
+                        item.get('name'),
+                        item.get('artist'),
+                        item.get('artist_id', 0),
+                        item.get('album'),
+                        item.get('album_id', 0),
+                        item.get('pic'),
+                        item.get('dt', 0)
+                    )
+                xbmc.log('[plugin.audio.music] Migrated %d history records from JSON to database' % len(old_history), xbmc.LOGINFO)
+                return old_history
+        except Exception as e:
+            xbmc.log('[plugin.audio.music] Error loading history from JSON file: %s' % str(e), xbmc.LOGERROR)
+
+    return []
 
 def save_history(history):
-    with xbmcvfs.File(HISTORY_FILE, 'w') as f:
-        f.write(json.dumps(history, ensure_ascii=False))
+    """
+    保存播放历史记录（已废弃，现在直接使用数据库）
+
+    Args:
+        history: 历史记录列表（不再使用）
+    """
+    # 此函数已废弃，历史记录现在直接保存到数据库
+    # 保留此函数是为了向后兼容
+    pass
 
 def build_music_listitem(song_info, media_type='song'):
     """
@@ -1144,47 +1181,34 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             listitem = xbmcgui.ListItem()
     except Exception:
         listitem = xbmcgui.ListItem()
-    # 记录播放历史
-    # 记录播放历史
-    try:
-        history = load_history()
+    # 记录播放历史（直接使用数据库）
+    if meida_type == 'song':
+        try:
+            resp = music.songs_detail([song_id])
+            song_info = resp.get('songs', [])[0]
 
-        resp = music.songs_detail([song_id])
-        song_info = resp.get('songs', [])[0]
+            artists = song_info.get('ar') or song_info.get('artists') or []
+            artist_name = "/".join([a.get('name') for a in artists])
+            artist_id = artists[0].get("id") if artists else 0
 
-        artists = song_info.get('ar') or song_info.get('artists') or []
-        artist_name = "/".join([a.get('name') for a in artists])
-        artist_id = artists[0].get("id") if artists else 0
+            album_info = song_info.get('al') or song_info.get('album') or {}
+            album_name = album_info.get("name")
+            album_id = album_info.get("id") or 0
+            pic = album_info.get("picUrl")
 
-        album_info = song_info.get('al') or song_info.get('album') or {}
-        album_name = album_info.get("name")
-        album_id = album_info.get("id") or 0
-        pic = album_info.get("picUrl")
-
-        item = {
-            "id": int(song_id),
-            "name": song_info.get("name"),
-            "artist": artist_name,
-            "artist_id": artist_id,
-            "album": album_name,
-            "album_id": album_id,
-            "pic": pic,
-            "dt": song_info.get("dt", 0) // 1000,
-            "time": int(time.time())
-        }
-
-        # 去重
-        history = [h for h in history if h["id"] != item["id"]]
-
-        # 插入最前
-        history.insert(0, item)
-
-        # 限制数量
-        history = history[:1000]
-
-        save_history(history)
-    except:
-        pass
+            # 直接添加到数据库
+            add_play_history(
+                song_id=int(song_id),
+                song_name=song_info.get("name"),
+                artist=artist_name,
+                artist_id=artist_id,
+                album=album_name,
+                album_id=album_id,
+                pic=pic,
+                duration=song_info.get("dt", 0) // 1000
+            )
+        except Exception as e:
+            xbmc.log('[plugin.audio.music] Error adding play history: %s' % str(e), xbmc.LOGERROR)
 
 
 
@@ -1230,7 +1254,7 @@ def history_by_album():
     groups = {}
 
     for h in history:
-        album = h["album"] or "未知专辑"
+        album = h.get("album") or "未知专辑"
         groups.setdefault(album, []).append(h)
 
     items = []
@@ -1252,13 +1276,13 @@ def history_filter(filter):
     return history_page(filter)
 
 def history_page(filter):
-    history = load_history()
-    now = int(time.time())
-
+    # 从数据库加载历史记录
     if filter == '7':
-        history = [h for h in history if now - h["time"] <= 7 * 86400]
+        history = get_play_history(days=7)
     elif filter == '30':
-        history = [h for h in history if now - h["time"] <= 30 * 86400]
+        history = get_play_history(days=30)
+    else:
+        history = get_play_history()
 
     items = []
 
@@ -1421,7 +1445,7 @@ def index():
 
 @plugin.route('/history_clear/')
 def history_clear():
-    save_history([])
+    clear_play_history()
 
     dialog = xbmcgui.Dialog()
     dialog.notification('历史记录', '已清空', xbmcgui.NOTIFICATION_INFO, 800, False)
@@ -1430,7 +1454,7 @@ def history_clear():
     return plugin.redirect(plugin.url_for('history'))
 @plugin.route('/history_play_all/')
 def history_play_all():
-    history = load_history()
+    history = get_play_history()
     if not history:
         dialog = xbmcgui.Dialog()
         dialog.notification('历史记录为空', '没有可播放的歌曲', xbmcgui.NOTIFICATION_INFO, 800, False)
@@ -1440,16 +1464,16 @@ def history_play_all():
     playlist.clear()
 
     for h in history:
-        listitem = xbmcgui.ListItem(label=h["name"])
-        listitem.setArt({'icon': h["pic"], 'thumbnail': h["pic"], 'fanart': h["pic"]})
+        listitem = xbmcgui.ListItem(label=h.get("name"))
+        listitem.setArt({'icon': h.get("pic"), 'thumbnail': h.get("pic"), 'fanart': h.get("pic")})
 
         plugin_path = plugin.url_for(
             'play',
             meida_type='song',
-            song_id=str(h["id"]),
+            song_id=str(h.get("id")),
             mv_id='0',
             sourceId='history',
-            dt=str(h["dt"]),
+            dt=str(h.get("dt")),
             source=h.get('source', 'netease')
         )
         playlist.add(plugin_path, listitem)
@@ -1461,7 +1485,7 @@ def history_by_artist():
     groups = {}
 
     for h in history:
-        artist = h["artist"] or "未知歌手"
+        artist = h.get("artist") or "未知歌手"
         groups.setdefault(artist, []).append(h)
 
     items = []
@@ -1475,24 +1499,23 @@ def history_by_artist():
     return items
 @plugin.route('/history_group_artist/<artist>/')
 def history_group_artist(artist):
-    history = load_history()
-    datas = [h for h in history if h["artist"] == artist]
+    datas = get_play_history_by_artist(artist)
 
     songs = []
     for h in datas:
         songs.append({
-            "id": h["id"],
-            "name": h["name"],
+            "id": h.get("id"),
+            "name": h.get("name"),
             "ar": [{
-                "name": h["artist"],
+                "name": h.get("artist"),
                 "id": h.get("artist_id", 0)   # ⭐ 自动补全 artist_id
             }],
             "al": {
-                "name": h["album"],
+                "name": h.get("album"),
                 "id": h.get("album_id", 0),   # ⭐ 自动补全 album_id
-                "picUrl": h["pic"]
+                "picUrl": h.get("pic")
             },
-            "dt": h["dt"] * 1000,
+            "dt": h.get("dt") * 1000,
             "mv_id": h.get("mv_id", 0),       # ⭐ 自动补全 mv_id
             "source": h.get("source", "netease")  # ⭐ 自动补全 source
         })
@@ -1501,24 +1524,23 @@ def history_group_artist(artist):
 
 @plugin.route('/history_group_album/<album>/')
 def history_group_album(album):
-    history = load_history()
-    datas = [h for h in history if h["album"] == album]
+    datas = get_play_history_by_album(album)
 
     songs = []
     for h in datas:
         songs.append({
-            "id": h["id"],
-            "name": h["name"],
+            "id": h.get("id"),
+            "name": h.get("name"),
             "ar": [{
-                "name": h["artist"],
+                "name": h.get("artist"),
                 "id": h.get("artist_id", 0)   # ⭐ 自动补全 artist_id
             }],
             "al": {
-                "name": h["album"],
+                "name": h.get("album"),
                 "id": h.get("album_id", 0),   # ⭐ 自动补全 album_id
-                "picUrl": h["pic"]
+                "picUrl": h.get("pic")
             },
-            "dt": h["dt"] * 1000,
+            "dt": h.get("dt") * 1000,
             "mv_id": h.get("mv_id", 0),       # ⭐ 自动补全 mv_id
             "source": h.get("source", "netease")  # ⭐ 自动补全 source
         })
@@ -3721,26 +3743,17 @@ def tunehub_play(source, id, br='320k'):
         pass
     # 3. 播放历史
     try:
-        history = load_history()
-
-        item = {
-            "id": str(id),
-            "name": title,
-            "artist": artist,
-            "artist_id": 0,
-            "album": album,
-            "album_id": 0,
-            "pic": pic,
-            "dt": dt // 1000,
-            "source": source,
-            "time": int(time.time())
-        }
-
-        history = [h for h in history if h["id"] != item["id"]]
-        history.insert(0, item)
-        history = history[:1000]
-
-        save_history(history)
+        # 直接添加到数据库
+        add_play_history(
+            song_id=int(id),
+            song_name=title,
+            artist=artist,
+            artist_id=0,
+            album=album,
+            album_id=0,
+            pic=pic,
+            duration=dt // 1000
+        )
         plugin.log.debug(f"[TuneHub] 写入历史成功")
     except Exception as e:
         plugin.log.debug(f"[TuneHub] 写入历史失败: {e}")
