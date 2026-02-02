@@ -184,7 +184,13 @@ def build_music_listitem(song_info, media_type='song'):
     # --- 专辑封面缓存 ---
     # 尝试从缓存获取专辑封面
     try:
-        album_id = song_info.get('id') or song_info.get('songid') or song_info.get('songId')
+        # 获取专辑 ID（不是歌曲 ID）
+        album_obj = song_info.get('al') or song_info.get('album')
+        if isinstance(album_obj, dict):
+            album_id = album_obj.get('id') or album_obj.get('albumId')
+        else:
+            album_id = None
+
         if album_id and str(album_id).isdigit():
             cache_db = get_cache_db()
             cached_cover = cache_db.get_album_cover(int(album_id))
@@ -217,14 +223,16 @@ def build_music_listitem(song_info, media_type='song'):
     tag.setDuration(duration)
     tag.setMediaType(media_type)
 
-    # cu.lrclyrics 依赖字段
-    tag.setProperty('IsSong', 'true')
-    tag.setProperty('IsInternetStream', 'true')
+    # cu.lrclyrics 依赖字段（必须在 ListItem 上设置，不是 InfoTagMusic）
+    listitem.setProperty('IsSong', 'true')
+    listitem.setProperty('IsInternetStream', 'true')
 
-    # --- 5. 设置数据库 ID（如果有） ---
-    sid = song_info.get('id') or song_info.get('songid') or song_info.get('songId')
-    if sid and str(sid).isdigit():
-        tag.setDatabaseId(int(sid))
+    # --- 5. 设置数据库 ID（仅用于本地数据库中的歌曲） ---
+    # 注意：在线音乐流媒体不应该设置 DatabaseId，因为这些歌曲不在 Kodi 本地数据库中
+    # 设置 DatabaseId 可能会导致 Kodi 在查找数据库记录时出错
+    # sid = song_info.get('id') or song_info.get('songid') or song_info.get('songId')
+    # if sid and str(sid).isdigit():
+    #     tag.setDatabaseId(int(sid))
 
     return listitem
 
@@ -1082,9 +1090,13 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
                 try:
                     resp = music.songs_detail([song_id])
                     song_info = resp.get('songs', [])[0]
+                    xbmc.log(f'Song info: {song_info}', xbmc.LOGDEBUG)
                     listitem = build_music_listitem(song_info)
-                except Exception:
-                    xbmc.log('Failed to build music listitem', xbmc.LOGERROR)
+                    xbmc.log(f'Listitem: {listitem}', xbmc.LOGDEBUG)
+                except Exception as e:
+                    import traceback
+                    xbmc.log(f'Failed to build music listitem: {str(e)}', xbmc.LOGERROR)
+                    xbmc.log(f'Traceback: {traceback.format_exc()}', xbmc.LOGERROR)
                     listitem = xbmcgui.ListItem()
             elif meida_type == 'mv':
                 try:
