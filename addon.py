@@ -675,19 +675,19 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
     #         'info_type': 'music',
     #     })
     # 推荐页面的播放全部按钮
-    if source == 'recommend_songs' and widget == '0':
-        items.append({
-            'label': '▶ 播放整个推荐列表',
-            'path': plugin.url_for(
-                'play_recommend_songs',
-                song_id='0',
-                mv_id='0',
-                dt='0'
-            ),
-            'is_playable': False,
-            'info': {'mediatype': 'music', 'title': '播放全部'},
-            'info_type': 'music',
-        })
+    # if source == 'recommend_songs' and widget == '0':
+    #     items.append({
+    #         'label': '▶ 播放整个推荐列表',
+    #         'path': plugin.url_for(
+    #             'play_recommend_songs',
+    #             song_id='0',
+    #             mv_id='0',
+    #             dt='0'
+    #         ),
+    #         'is_playable': False,
+    #         'info': {'mediatype': 'music', 'title': '播放全部'},
+    #         'info_type': 'music',
+    #     })
 
     xbmc.log('plugin.audio.music: play sources: %s' % [p.get('source') for p in songs], xbmc.LOGDEBUG)
     for play in songs:
