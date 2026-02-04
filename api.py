@@ -6,7 +6,7 @@ import time
 import requests
 import re
 import hashlib
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 from encrypt import encrypted_request
 from xbmcswift2 import xbmc, xbmcaddon, xbmcplugin # type: ignore
 from http.cookiejar import Cookie
@@ -53,6 +53,11 @@ LXMUSIC_SOURCE_MAPPING = {
     'qobuz': 'qd',
     'tidal': 'td'
 }
+
+# GD Music API 配置
+GD_MUSIC_API_URL = 'https://music-api.gdstudio.xyz/api.php'
+# GD Music API 支持的音源
+GD_MUSIC_SOURCES = ['netease', 'kuwo'] #'joox', 'tencent', 'tidal', 'spotify', 'ytmusic', 'qobuz', 'deezer', 'migu', 'kugou', 'ximalaya', 'apple']
 
 # 搜索 API 配置
 SEARCH_API_URL = 'https://music-api.gdstudio.xyz/api.php'
@@ -671,41 +676,32 @@ class NetEase(object):
                     if url:
                         used_source = 'lxmusic_search'
 
-            # 2. 如果 LXMUSIC 失败或 source 是 netease，尝试 TuneHub
+            # 2. 如果 LXMUSIC 失败或 source 是 netease，尝试 GD Music API
             if not url:
                 try:
-                    xbmc.log("plugin.audio.music: songs_url_v1 trying TuneHub id={}".format(_id), xbmc.LOGDEBUG)
-                    tun = self.tunehub_url(_id, source=source)
-                    if isinstance(tun, dict):
-                        if 'url' in tun:
-                            url = tun.get('url')
-                        elif 'data' in tun:
-                            d = tun.get('data')
-                            if isinstance(d, dict):
-                                url = d.get('url')
-                            elif isinstance(d, list) and len(d) > 0:
-                                url = d[0].get('url') if isinstance(d[0], dict) else None
-                    elif isinstance(tun, str):
-                        url = tun
+                    xbmc.log("plugin.audio.music: songs_url_v1 trying GD Music API id={}".format(_id), xbmc.LOGDEBUG)
+                    # 将 level 转换为 GD Music API 支持的音质格式
+                    gd_quality = self._convert_level_to_gdmusic_quality(level)
+                    play_url, actual_source = self._gdmusic_get_play_url_with_fallback(
+                        str(_id), quality=gd_quality, song_name=song_name, artist_name=artist_name, original_source=source
+                    )
 
-                    if url:
-                        # 检查 URL 是否可用
-                        if self._check_url_valid(url):
-                            used_source = 'tunehub'
-                            xbmc.log("plugin.audio.music: songs_url_v1 TuneHub success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
-                        else:
-                            xbmc.log("plugin.audio.music: songs_url_v1 TuneHub URL不可用 id={}".format(_id), xbmc.LOGWARNING)
-                            url = None
+                    if play_url:
+                        url = play_url
+                        used_source = 'gdmusic_%s' % actual_source
+                        xbmc.log("plugin.audio.music: songs_url_v1 GD Music success id={} url={} source={}".format(_id, url, actual_source), xbmc.LOGDEBUG)
+                    else:
+                        xbmc.log("plugin.audio.music: songs_url_v1 GD Music failed id={}".format(_id), xbmc.LOGWARNING)
                 except Exception as e:
-                    xbmc.log("plugin.audio.music: songs_url_v1 TuneHub failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
+                    xbmc.log("plugin.audio.music: songs_url_v1 GD Music failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
                     url = None
 
-            # 2.5. 如果 TuneHub 也失败，且支持搜索回退，尝试搜索回退
+            # 2.5. 如果 GD Music 也失败，且支持搜索回退，尝试搜索回退
             if not url and lxmusic_source:
-                xbmc.log("plugin.audio.music: songs_url_v1 TuneHub失败，尝试搜索回退 id={}".format(_id), xbmc.LOGDEBUG)
+                xbmc.log("plugin.audio.music: songs_url_v1 GD Music失败，尝试搜索回退 id={}".format(_id), xbmc.LOGDEBUG)
                 url = self._search_and_retry_lxmusic(str(_id), song_name, artist_name, lxmusic_source, quality)
                 if url:
-                    used_source = 'lxmusic_search_after_tunehub'
+                    used_source = 'lxmusic_search_after_gdmusic'
 
             xbmc.log("plugin.audio.music: songs_url_v1 id={} url={} used_source={}".format(_id, url, used_source), xbmc.LOGDEBUG)
             result_data.append({'id': _id, 'url': url, 'level': level, 'source': used_source})
@@ -1413,6 +1409,171 @@ class NetEase(object):
         return hashlib.sha256(message.encode('utf-8')).hexdigest()
 
     @staticmethod
+    # ========== GD Music API 集成 ==========
+
+    def _gdmusic_request(self, types, **params):
+        """
+        向 GD Music API 发送请求
+
+        Args:
+            types: API 类型 (search, url, pic, lyric)
+            **params: API 参数
+
+        Returns:
+            dict: API 响应数据，失败返回 None
+        """
+        params['types'] = types
+        url = GD_MUSIC_API_URL + '?' + urlencode(params)
+
+        xbmc.log("plugin.audio.music: GD Music API 请求: %s" % url[:150], xbmc.LOGDEBUG)
+
+        # 浏览器风格的请求头
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+        }
+
+        # 重试机制：最多 3 次尝试
+        for attempt in range(3):
+            try:
+                if attempt > 0:
+                    wait_time = min(2 ** attempt, 10)  # 最多等待 10 秒
+                    xbmc.log("plugin.audio.music: GD Music API 重试 %d/%d，等待 %d 秒" % (attempt + 1, 3, wait_time), xbmc.LOGINFO)
+                    time.sleep(wait_time)
+
+                https_url = url.replace('http://', 'https://')
+
+                # 尝试不同的 SSL 策略
+                if attempt == 0:
+                    # 第一次尝试：使用 HTTPS
+                    response = requests.get(https_url, headers=headers, timeout=20)
+                elif attempt == 1:
+                    # 第二次尝试：跳过 SSL 验证
+                    response = requests.get(https_url, headers=headers, timeout=20, verify=False)
+                else:
+                    # 最后尝试：使用 HTTP
+                    http_url = url.replace('https://', 'http://')
+                    response = requests.get(http_url, headers=headers, timeout=20)
+
+                response.raise_for_status()
+
+                xbmc.log("plugin.audio.music: GD Music API 响应状态: %d" % response.status_code, xbmc.LOGDEBUG)
+
+                # 检查响应是否为空
+                if not response.content:
+                    xbmc.log("plugin.audio.music: GD Music API 返回空响应", xbmc.LOGERROR)
+                    continue
+
+                # 尝试解析 JSON
+                try:
+                    data = response.json()
+                    xbmc.log("plugin.audio.music: GD Music API 尝试 %d 成功" % (attempt + 1), xbmc.LOGDEBUG)
+                    return data
+                except ValueError as json_error:
+                    xbmc.log("plugin.audio.music: GD Music API JSON 解析失败: %s" % str(json_error), xbmc.LOGERROR)
+                    xbmc.log("plugin.audio.music: GD Music API 响应文本: %s" % response.text[:500], xbmc.LOGERROR)
+                    continue
+
+            except requests.exceptions.RequestException as e:
+                xbmc.log("plugin.audio.music: GD Music API 尝试 %d/%d 失败: %s" % (attempt + 1, 3, str(e)), xbmc.LOGERROR)
+                if attempt == 2:  # 最后一次尝试
+                    xbmc.log("plugin.audio.music: GD Music API 所有重试均失败", xbmc.LOGERROR)
+                    return None
+                continue
+
+        return None
+
+    def _gdmusic_get_play_url_with_fallback(self, track_id, quality='320', song_name='', artist_name='', original_source='netease'):
+        """
+        使用 GD Music API 获取播放 URL，支持多音乐源优先级回退
+
+        优先级顺序：原音乐源 > kuwo > joox > netease
+
+        重要：换源时，歌曲ID是源特定的，不能直接复用。
+        需要使用歌曲信息（歌名、歌手）在新源重新搜索，获取新源的歌曲ID。
+
+        Args:
+            track_id: 歌曲 ID（原源的ID）
+            quality: 音质（默认 320）
+            song_name: 歌曲名称（用于换源时重新搜索）
+            artist_name: 歌手名称（用于换源时重新搜索）
+            original_source: 原始音乐源（用于判断是否需要重新搜索）
+
+        Returns:
+            tuple: (play_url, source) 或 (None, None) 如果所有源都失败
+        """
+        # 构建优先级列表：原音乐源 > kuwo > joox > netease
+        # 排除重复的音乐源
+        fallback_sources = ['kuwo', 'joox', 'netease']
+        source_priority = [original_source] + [s for s in fallback_sources if s != original_source]
+
+        xbmc.log("plugin.audio.music: GD Music 回退: track_id=%s, quality=%s, song=%s, artist=%s, original_source=%s" %
+                 (track_id, quality, song_name, artist_name, original_source), xbmc.LOGDEBUG)
+        xbmc.log("plugin.audio.music: GD Music 优先级: %s" % ' > '.join(source_priority), xbmc.LOGDEBUG)
+
+        # 按优先级尝试每个音乐源
+        for source in source_priority:
+            xbmc.log("plugin.audio.music: GD Music 尝试音源: %s" % source, xbmc.LOGDEBUG)
+
+            # 判断是否需要重新搜索
+            # 如果当前尝试的源与原始源不同，说明在换源，需要重新搜索
+            need_search = (source != original_source)
+
+            if need_search:
+                # 换源时，需要使用歌曲信息在新源重新搜索
+                if not song_name:
+                    xbmc.log("plugin.audio.music: GD Music 换源失败：song_name 为空", xbmc.LOGWARNING)
+                    continue
+
+                xbmc.log("plugin.audio.music: GD Music 换源，在新源搜索: %s - %s" % (source, song_name, artist_name), xbmc.LOGDEBUG)
+
+                # 在新源搜索歌曲
+                # 优先只用歌名搜索，如果失败再用"歌手+歌名"
+                search_query = song_name
+                search_data = self._gdmusic_request('search', source=source, name=search_query, count='1', pages='1')
+
+                # 如果只用歌名搜索没有结果，尝试用"歌手+歌名"
+                if not search_data or not isinstance(search_data, list) or len(search_data) == 0:
+                    if artist_name:
+                        xbmc.log("plugin.audio.music: GD Music 歌名搜索失败，尝试用歌手+歌名: %s %s" % (artist_name, song_name), xbmc.LOGDEBUG)
+                        search_query = '%s %s' % (artist_name, song_name)
+                        search_data = self._gdmusic_request('search', source=source, name=search_query, count='1', pages='1')
+
+                if not search_data or not isinstance(search_data, list) or len(search_data) == 0:
+                    xbmc.log("plugin.audio.music: GD Music 在 %s 中搜索失败或无结果" % source, xbmc.LOGWARNING)
+                    continue
+
+                # 获取搜索结果中的第一首歌曲
+                new_track = search_data[0]
+                new_track_id = new_track.get('id', '')
+
+                if not new_track_id:
+                    xbmc.log("plugin.audio.music: GD Music 在 %s 的搜索结果中未找到有效的 track_id" % source, xbmc.LOGWARNING)
+                    continue
+
+                xbmc.log("plugin.audio.music: GD Music 在 %s 中找到歌曲: id=%s, name=%s" % (source, new_track_id, new_track.get('name', '')), xbmc.LOGDEBUG)
+
+                # 使用新源的ID获取播放URL
+                data = self._gdmusic_request('url', source=source, id=new_track_id, br=quality)
+            else:
+                # 同源，直接使用原ID
+                data = self._gdmusic_request('url', source=source, id=track_id, br=quality)
+
+            if data and 'url' in data and data['url']:
+                play_url = data['url']
+                xbmc.log("plugin.audio.music: GD Music 成功从 %s 获取播放链接: %s" % (source, play_url[:80] + '...'), xbmc.LOGINFO)
+                return play_url, source
+
+            xbmc.log("plugin.audio.music: GD Music 从 %s 获取播放链接失败" % source, xbmc.LOGWARNING)
+
+        # 所有音乐源都失败
+        xbmc.log("plugin.audio.music: GD Music 所有音源均失败: track_id=%s" % track_id, xbmc.LOGERROR)
+        return None, None
+
+    @staticmethod
     def _lxmusic_generate_sign(request_path: str) -> str:
         """
         生成 LXMUSIC API 请求签名
@@ -1593,6 +1754,28 @@ class NetEase(object):
             'jymaster': 'master'
         }
         return level_mapping.get(level, '320k')
+
+    def _convert_level_to_gdmusic_quality(self, level: str) -> str:
+        """
+        将网易云的 level 转换为 GD Music API 的 quality
+
+        Args:
+            level: 网易云音质级别 (standard/exceed/high/lossless/hires/dolby/jyeffect/jymaster)
+
+        Returns:
+            GD Music API 音质标识符 (128/192/320/740/999)
+        """
+        level_mapping = {
+            'standard': '128',
+            'exceed': '320',
+            'high': '320',
+            'lossless': '740',
+            'hires': '999',
+            'dolby': '999',
+            'jyeffect': '740',
+            'jymaster': '999'
+        }
+        return level_mapping.get(level, '320')
 
     def _search_music_by_name(self, keyword: str, source: str = 'kuwo', limit: int = 5) -> list:
         """
