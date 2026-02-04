@@ -62,7 +62,7 @@ GD_MUSIC_SOURCES = ['netease', 'kuwo'] #'joox', 'tencent', 'tidal', 'spotify', '
 # 搜索 API 配置
 SEARCH_API_URL = 'https://music-api.gdstudio.xyz/api.php'
 # 搜索 API 支持的音源（与 LXMUSIC 映射对应）
-SEARCH_API_SOURCES = ['kuwo', 'netease', 'tencent', 'migu', 'kugou']
+SEARCH_API_SOURCES = ['kuwo', 'netease']#, 'tencent', 'migu', 'kugou']
 
 PROFILE = xbmc.translatePath(xbmcaddon.Addon().getAddonInfo('profile'))
 if not os.path.exists(PROFILE):
@@ -1777,6 +1777,28 @@ class NetEase(object):
         }
         return level_mapping.get(level, '320')
 
+    def _convert_quality_to_gdmusic_quality(self, quality: str) -> str:
+        """
+        将 LXMUSIC 的 quality 转换为 GD Music API 的 quality
+
+        Args:
+            quality: LXMUSIC 音质标识符 (128k/320k/flac/flac24bit/hires/atmos/atmos_plus/master)
+
+        Returns:
+            GD Music API 音质标识符 (128/192/320/740/999)
+        """
+        quality_mapping = {
+            '128k': '128',
+            '320k': '320',
+            'flac': '740',
+            'flac24bit': '999',
+            'hires': '999',
+            'atmos': '999',
+            'atmos_plus': '999',
+            'master': '999'
+        }
+        return quality_mapping.get(quality, '320')
+
     def _search_music_by_name(self, keyword: str, source: str = 'kuwo', limit: int = 5) -> list:
         """
         通过搜索 API 搜索音乐
@@ -1982,6 +2004,25 @@ class NetEase(object):
                                 return new_url
                             else:
                                 xbmc.log(f"plugin.audio.music: 搜索回退URL不可用: {new_url}", xbmc.LOGWARNING)
+                        else:
+                            # LXMUSIC API 失败，尝试使用 GD Music API
+                            xbmc.log(f"plugin.audio.music: LXMUSIC API 失败，尝试使用 GD Music API: id={new_song_id}, source={search_source}", xbmc.LOGDEBUG)
+                            try:
+                                # 将 LXMUSIC quality 转换为 GD Music quality
+                                gd_quality = self._convert_quality_to_gdmusic_quality(quality)
+                                gdmusic_url, gdmusic_source = self._gdmusic_get_play_url_with_fallback(
+                                    new_song_id, quality=gd_quality,
+                                    song_name=song.get('name'),
+                                    artist_name=song.get('artist'),
+                                    original_source=search_source
+                                )
+                                if gdmusic_url and self._check_url_valid(gdmusic_url):
+                                    xbmc.log(f"plugin.audio.music: GD Music API 搜索回退成功: 原ID={song_id} -> 新ID={new_song_id}, 音源={gdmusic_source}, URL={gdmusic_url}", xbmc.LOGINFO)
+                                    return gdmusic_url
+                                else:
+                                    xbmc.log(f"plugin.audio.music: GD Music API 搜索回退失败: id={new_song_id}, source={search_source}", xbmc.LOGWARNING)
+                            except Exception as ge:
+                                xbmc.log(f"plugin.audio.music: GD Music API 搜索回退异常: {str(ge)}", xbmc.LOGWARNING)
                     except Exception as e:
                         xbmc.log(f"plugin.audio.music: 搜索回退尝试失败: {str(e)}", xbmc.LOGWARNING)
                         continue
