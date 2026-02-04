@@ -1409,7 +1409,6 @@ class NetEase(object):
         """
         return hashlib.sha256(message.encode('utf-8')).hexdigest()
 
-    @staticmethod
     # ========== GD Music API 集成 ==========
 
     def _gdmusic_request(self, types, **params):
@@ -1994,39 +1993,46 @@ class NetEase(object):
 
                     xbmc.log(f"plugin.audio.music: 尝试搜索结果: id={new_song_id}, name={song.get('name')}, artist={song.get('artist')}", xbmc.LOGDEBUG)
 
-                    try:
-                        # 使用新的歌曲 ID 调用 LXMUSIC API
-                        new_url = self._lxmusic_get_music_url(lxmusic_source, new_song_id, quality)
+                    new_url = None
+                    lxmusic_error = None
 
-                        if new_url:
-                            # 检查 URL 是否可用
-                            if self._check_url_valid(new_url):
-                                xbmc.log(f"plugin.audio.music: 搜索回退成功: 原ID={song_id} -> 新ID={new_song_id}, 音源={search_source}, URL={new_url}", xbmc.LOGINFO)
-                                return new_url
-                            else:
-                                xbmc.log(f"plugin.audio.music: 搜索回退URL不可用: {new_url}", xbmc.LOGWARNING)
-                        else:
-                            # LXMUSIC API 失败，尝试使用 GD Music API
-                            xbmc.log(f"plugin.audio.music: LXMUSIC API 失败，尝试使用 GD Music API: id={new_song_id}, source={search_source}", xbmc.LOGDEBUG)
-                            try:
-                                # 将 LXMUSIC quality 转换为 GD Music quality
-                                gd_quality = self._convert_quality_to_gdmusic_quality(quality)
-                                gdmusic_url, gdmusic_source = self._gdmusic_get_play_url_with_fallback(
-                                    new_song_id, quality=gd_quality,
-                                    song_name=song.get('name'),
-                                    artist_name=song.get('artist'),
-                                    original_source=search_source
-                                )
-                                if gdmusic_url and self._check_url_valid(gdmusic_url):
-                                    xbmc.log(f"plugin.audio.music: GD Music API 搜索回退成功: 原ID={song_id} -> 新ID={new_song_id}, 音源={gdmusic_source}, URL={gdmusic_url}", xbmc.LOGINFO)
-                                    return gdmusic_url
-                                else:
-                                    xbmc.log(f"plugin.audio.music: GD Music API 搜索回退失败: id={new_song_id}, source={search_source}", xbmc.LOGWARNING)
-                            except Exception as ge:
-                                xbmc.log(f"plugin.audio.music: GD Music API 搜索回退异常: {str(ge)}", xbmc.LOGWARNING)
+                    # 使用新的歌曲 ID 调用 LXMUSIC API
+                    try:
+                        new_url = self._lxmusic_get_music_url(lxmusic_source, new_song_id, quality)
                     except Exception as e:
-                        xbmc.log(f"plugin.audio.music: 搜索回退尝试失败: {str(e)}", xbmc.LOGWARNING)
-                        continue
+                        lxmusic_error = str(e)
+                        xbmc.log(f"plugin.audio.music: LXMUSIC API 异常: {str(e)}", xbmc.LOGWARNING)
+
+                    # 检查 LXMUSIC API 结果
+                    if new_url:
+                        # 检查 URL 是否可用
+                        if self._check_url_valid(new_url):
+                            xbmc.log(f"plugin.audio.music: 搜索回退成功: 原ID={song_id} -> 新ID={new_song_id}, 音源={search_source}, URL={new_url}", xbmc.LOGINFO)
+                            return new_url
+                        else:
+                            xbmc.log(f"plugin.audio.music: 搜索回退URL不可用: {new_url}", xbmc.LOGWARNING)
+                            new_url = None  # 标记为失败，触发 GD Music API
+
+                    # 如果 LXMUSIC API 失败或返回空结果，尝试使用 GD Music API
+                    if not new_url:
+                        xbmc.log(f"plugin.audio.music: LXMUSIC API 失败，尝试使用 GD Music API: id={new_song_id}, source={search_source}, error={lxmusic_error}", xbmc.LOGDEBUG)
+                        try:
+                            # 将 LXMUSIC quality 转换为 GD Music quality
+                            gd_quality = self._convert_quality_to_gdmusic_quality(quality)
+                            gdmusic_url, gdmusic_source = self._gdmusic_get_play_url_with_fallback(
+                                new_song_id, quality=gd_quality,
+                                song_name=song.get('name'),
+                                artist_name=song.get('artist'),
+                                original_source=search_source
+                            )
+                            if gdmusic_url and self._check_url_valid(gdmusic_url):
+                                xbmc.log(f"plugin.audio.music: GD Music API 搜索回退成功: 原ID={song_id} -> 新ID={new_song_id}, 音源={gdmusic_source}, URL={gdmusic_url}", xbmc.LOGINFO)
+                                return gdmusic_url
+                            else:
+                                xbmc.log(f"plugin.audio.music: GD Music API 搜索回退失败: id={new_song_id}, source={search_source}", xbmc.LOGWARNING)
+                        except Exception as ge:
+                            xbmc.log(f"plugin.audio.music: GD Music API 搜索回退异常: {str(ge)}", xbmc.LOGWARNING)
+                        continue  # 继续尝试下一个搜索结果
 
                 # 如果当前音源的所有搜索结果都失败，尝试下一个音源
                 xbmc.log(f"plugin.audio.music: 音源 {search_source} 所有搜索结果均失败，尝试下一个音源", xbmc.LOGDEBUG)
