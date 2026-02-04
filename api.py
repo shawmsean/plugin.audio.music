@@ -673,6 +673,7 @@ class NetEase(object):
                     xbmc.log("plugin.audio.music: songs_url_v1 尝试搜索回退 id={} song_name={} artist_name={}".format(
                         _id, song_name, artist_name), xbmc.LOGDEBUG)
                     url = self._search_and_retry_lxmusic(str(_id), song_name, artist_name, lxmusic_source, quality)
+                    
                     if url:
                         used_source = 'lxmusic_search'
 
