@@ -1029,7 +1029,7 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
             dialog.notification(
                 '收藏', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
     elif action == 'view_comments':
-        # 查看歌曲评论
+        # 查看歌曲评论 — 在OSD评论窗口(1142)中打开
         xbmc.log(f'[Music Comments] Viewing comments for song_id: {song_id}', xbmc.LOGDEBUG)
         
         # 保存歌曲ID到存储
@@ -1037,8 +1037,12 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
         comments_storage['current_song_id'] = song_id
         xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
         
-        # 调用评论功能
-        xbmc.executebuiltin(f'ActivateWindow(10025,plugin://plugin.audio.music/song_comments/{song_id}/0)')
+        # 设置评论内容URL到Window Property，供1142的content动态读取
+        comment_url = f'plugin://plugin.audio.music/song_comments/{song_id}/0/'
+        xbmcgui.Window(10000).setProperty('bili_comment_content_url', comment_url)
+        
+        # 激活OSD评论窗口
+        xbmc.executebuiltin('ActivateWindow(1142)')
     elif action == 'play_song':
         songs = music.songs_url_v1([song_id], level=level, source='netease').get("data", [])
         urls = [song['url'] for song in songs]
@@ -1207,6 +1211,11 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
                 pic=pic,
                 duration=song_info.get("dt", 0) // 1000
             )
+
+            # 将歌手ID设置到Window Property，供皮肤端OSD歌手信息使用
+            if artist_id:
+                xbmcgui.Window(10000).setProperty('nc_current_artist_id', str(artist_id))
+                xbmcgui.Window(10000).setProperty('nc_current_artist_name', artist_name)
         except Exception as e:
             xbmc.log('[plugin.audio.music] Error adding play history: %s' % str(e), xbmc.LOGERROR)
 
@@ -2109,23 +2118,71 @@ def album(id):
 
 @plugin.route('/artist/<id>/')
 def artist(id):
+    info = music.artist_info(id).get("artist", {})
+    artist_pic = info.get('picUrl', '')
+    artist_name = info.get('name', '')
+    music_size = info.get('musicSize', 0)
+    album_size = info.get('albumSize', 0)
+    mv_size = info.get('mvSize', 0)
+
     items = [
-        {'label': '热门50首', 'path': plugin.url_for('hot_songs', id=id)},
-        {'label': '所有歌曲', 'path': plugin.url_for(
-            'artist_songs', id=id, offset=0)},
-        {'label': '专辑', 'path': plugin.url_for(
-            'albums', artist_id=id, offset='0')},
-        {'label': 'MV', 'path': plugin.url_for('artist_mvs', id=id, offset=0)},
+        {
+            'label': '热门50首',
+            'path': plugin.url_for('hot_songs', id=id),
+            'icon': artist_pic,
+            'thumbnail': artist_pic,
+            'fanart': artist_pic,
+            'info': {'plot': f'{artist_name} - 热门50首歌曲' if artist_name else '热门50首歌曲'},
+            'info_type': 'video',
+        },
+        {
+            'label': '所有歌曲',
+            'path': plugin.url_for('artist_songs', id=id, offset=0),
+            'icon': artist_pic,
+            'thumbnail': artist_pic,
+            'fanart': artist_pic,
+            'info': {'plot': f'共{music_size}首歌曲' if music_size else '所有歌曲'},
+            'info_type': 'video',
+        },
+        {
+            'label': '专辑',
+            'path': plugin.url_for('albums', artist_id=id, offset='0'),
+            'icon': artist_pic,
+            'thumbnail': artist_pic,
+            'fanart': artist_pic,
+            'info': {'plot': f'共{album_size}张专辑' if album_size else '专辑'},
+            'info_type': 'video',
+        },
+        {
+            'label': 'MV',
+            'path': plugin.url_for('artist_mvs', id=id, offset=0),
+            'icon': artist_pic,
+            'thumbnail': artist_pic,
+            'fanart': artist_pic,
+            'info': {'plot': f'共{mv_size}个MV' if mv_size else 'MV'},
+            'info_type': 'video',
+        },
     ]
 
-    info = music.artist_info(id).get("artist", {})
     if 'accountId' in info:
-        items.append({'label': '用户页', 'path': plugin.url_for(
-            'user', id=info['accountId'])})
+        items.append({
+            'label': '用户页',
+            'path': plugin.url_for('user', id=info['accountId']),
+            'icon': artist_pic,
+            'thumbnail': artist_pic,
+            'fanart': artist_pic,
+            'info_type': 'video',
+        })
 
     if account['logined']:
-        items.append(
-            {'label': '相似歌手', 'path': plugin.url_for('similar_artist', id=id)})
+        items.append({
+            'label': '相似歌手',
+            'path': plugin.url_for('similar_artist', id=id),
+            'icon': artist_pic,
+            'thumbnail': artist_pic,
+            'fanart': artist_pic,
+            'info_type': 'video',
+        })
     return items
 
 
@@ -3997,13 +4054,27 @@ def song_comments(song_id, offset='0'):
     xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
 
     offset = int(offset)
-    limit = 50  # 增加每页显示的评论数量，从20改为50
+    limit = 50  # 每页显示的评论数量
 
     try:
-        # 调用评论API
-        xbmc.log(f'[Music Comments] Calling API with song_id={song_id}, offset={offset}, limit={limit}', xbmc.LOGDEBUG)
-        resp = music.song_comments(music_id=song_id, offset=offset, limit=limit)
-        xbmc.log(f'[Music Comments] API response received', xbmc.LOGDEBUG)
+        # 尝试从SQLite缓存读取评论API数据
+        cache_db = get_cache_db()
+        cache_key = cache_db.generate_cache_key('song_comments', song_id, offset, limit)
+        resp = cache_db.get(cache_key)
+
+        if resp is not None:
+            xbmc.log(f'[Music Comments] Cache HIT: song_id={song_id}, offset={offset}, limit={limit}', xbmc.LOGINFO)
+        else:
+            xbmc.log(f'[Music Comments] Cache MISS: song_id={song_id}, offset={offset}, limit={limit}', xbmc.LOGINFO)
+            # 调用评论API
+            xbmc.log(f'[Music Comments] Calling API with song_id={song_id}, offset={offset}, limit={limit}', xbmc.LOGDEBUG)
+            resp = music.song_comments(music_id=song_id, offset=offset, limit=limit)
+            xbmc.log(f'[Music Comments] API response received', xbmc.LOGDEBUG)
+
+            # 写入SQLite缓存，TTL=6小时
+            if resp:
+                cache_db.set(cache_key, resp, cache_type='song_comments', expire_seconds=6*60*60)
+                xbmc.log(f'[Music Comments] Cache written: song_id={song_id}, offset={offset}, TTL=6h', xbmc.LOGINFO)
 
         if not resp:
             dialog.notification('获取评论失败', '无法获取评论数据',
@@ -4021,102 +4092,98 @@ def song_comments(song_id, offset='0'):
         # 获取评论总数
         total = resp.get('total', 0)
 
-        # 构建纯文本格式的评论内容
-        text_content = ""
-
-        # 计算当前页码
-        current_page = (offset // limit) + 1
-        total_pages = (total + limit - 1) // limit if total > 0 else 1
-
-        # 添加标题（包含页码和总数信息）
-
-        text_content += f"              歌曲评论 (第{current_page}页/共{total_pages}页)\n"
-        text_content += f"              总计: {total} 条评论\n"
-        text_content += "═══════════════════════════════════════\n"
+        # 构建Kodi列表项（每条评论一个item，供皮肤端横向展示）
+        items = []
 
         # 热门评论
         hot_comments = resp.get('hotComments', [])
-        if hot_comments:
-            text_content += "🔥 热门评论\n"
-            text_content += "═══════════════════════════════════════\n"
+        for i, comment in enumerate(hot_comments, 1):
+            user = comment.get('user', {})
+            nickname = user.get('nickname', '匿名用户')
+            content = comment.get('content', '')
+            liked_count = comment.get('likedCount', 0)
+            time_str = comment.get('timeStr', '')
+            avatar_url = user.get('avatarUrl', '')
 
-            for i, comment in enumerate(hot_comments, 1):
-                user = comment.get('user', {})
-                nickname = user.get('nickname', '匿名用户')
-                content = comment.get('content', '')
-                liked_count = comment.get('likedCount', 0)
-                time_str = comment.get('timeStr', '')
-
-                text_content += f"【{i}】{nickname}\n"
-                text_content += f"    {content}\n"
-                text_content += f"    👍 {liked_count} 点赞 | {time_str}\n\n"
-
-            text_content += "\n"
+            items.append({
+                'label': nickname,
+                'path': plugin.url_for('song_comments', song_id=song_id, offset=str(offset)),
+                'properties': {
+                    'comment_content': content,
+                    'comment_nickname': nickname,
+                    'comment_liked_count': str(liked_count),
+                    'comment_time': time_str,
+                    'comment_type': 'hot',
+                    'comment_index': str(i),
+                },
+                'thumbnail': avatar_url,
+                'icon': avatar_url,
+                'is_playable': False,
+            })
 
         # 最新评论
         comments = resp.get('comments', [])
-        if comments:
+        for i, comment in enumerate(comments, 1):
+            user = comment.get('user', {})
+            nickname = user.get('nickname', '匿名用户')
+            content = comment.get('content', '')
+            liked_count = comment.get('likedCount', 0)
+            time_str = comment.get('timeStr', '')
+            avatar_url = user.get('avatarUrl', '')
 
-            text_content += "💬 最新评论\n"
-            text_content += "═══════════════════════════════════════\n"
-
-            for i, comment in enumerate(comments, 1):
-                user = comment.get('user', {})
-                nickname = user.get('nickname', '匿名用户')
-                content = comment.get('content', '')
-                liked_count = comment.get('likedCount', 0)
-                time_str = comment.get('timeStr', '')
-
-                text_content += f"【{(offset if not hot_comments else 0) + i}】{nickname}\n"
-                text_content += f"    {content}\n"
-                text_content += f"    👍 {liked_count} 点赞 | {time_str}\n\n"
-
-        # 添加分页信息
-        total = resp.get('total', 0)
-        current_count = len(hot_comments) + len(comments)
-        
-        # 构建按钮列表
-        items = []
-        
-        # 如果当前不是第一页，添加返回顶部按钮
-        if offset > 0:
+            comment_index = (offset if not hot_comments else 0) + i
             items.append({
-                'label': f"⬆ 返回第一页",
-                'path': plugin.url_for('load_more_comments', offset='0'),
+                'label': nickname,
+                'path': plugin.url_for('song_comments', song_id=song_id, offset=str(offset)),
+                'properties': {
+                    'comment_content': content,
+                    'comment_nickname': nickname,
+                    'comment_liked_count': str(liked_count),
+                    'comment_time': time_str,
+                    'comment_type': 'normal',
+                    'comment_index': str(comment_index),
+                },
+                'thumbnail': avatar_url,
+                'icon': avatar_url,
                 'is_playable': False,
             })
-        
+
+        # 记录已加载评论总数，供皮肤端增量加载使用
+        current_count = offset + len(hot_comments) + len(comments)
+        xbmcgui.Window(10000).setProperty('bili_comment_total', str(total))
+        xbmcgui.Window(10000).setProperty('bili_comment_loaded', str(current_count))
+
+        # 如果还有更多评论，添加"加载更多"项
         if current_count < total:
-            text_content += "\n"
-            text_content += f"已显示: {current_count}/{total} 条评论\n"
-            text_content += f"当前页: {current_page}/{total_pages}\n"
-            text_content += "按 ESC 返回\n"
-            text_content += "═══════════════════════════════════════\n"
-            
-            # 添加"加载更多"按钮
+            next_offset = offset + limit
+            next_url = plugin.url_for('load_more_comments', offset=str(next_offset))
+            # 将下一页URL存到Window Property，供皮肤端Container.Update使用
+            xbmcgui.Window(10000).setProperty('bili_comment_next_page', next_url)
             items.append({
-                'label': f"▶ 加载更多评论 ({current_count}/{total})",
-                'path': plugin.url_for('load_more_comments', offset=str(offset + limit)),
+                'label': '',
+                'path': next_url,
+                'properties': {
+                    'is_comment_trigger': '1',
+                    'next_page': next_url,
+                },
                 'is_playable': False,
+                'thumbnail': '',
+                'icon': '',
             })
-            
-            # 先显示文本内容
-            dialog.textviewer('歌曲评论', text_content)
-            
-            return items
         else:
-            # 没有更多评论了
-            text_content += "\n"
-            text_content += "═══════════════════════════════════════\n"
-            text_content += f"已显示全部 {total} 条评论\n"
-            text_content += f"当前页: {current_page}/{total_pages}\n"
-            text_content += "按 ESC 返回\n"
-            text_content += "═══════════════════════════════════════\n"
+            # 没有更多评论时清除property
+            xbmcgui.Window(10000).setProperty('bili_comment_next_page', '')
 
-            # 显示文本内容
-            dialog.textviewer('歌曲评论', text_content)
-            
-            return items
+        # 缓存已加载的评论项（排除触发器项），供增量加载使用
+        items_to_cache = items[:-1] if (current_count < total) else items
+        try:
+            import json
+            xbmcgui.Window(10000).setProperty('bili_comment_cache', json.dumps(items_to_cache))
+        except:
+            pass
+
+        xbmc.log(f'[Music Comments] Returning {len(items)} items (hot:{len(hot_comments)} normal:{len(comments)} trigger:{1 if current_count < total else 0})', xbmc.LOGDEBUG)
+        return items
 
     except Exception as e:
         xbmc.log(f'获取歌曲评论失败: {str(e)}', xbmc.LOGERROR)
@@ -4128,7 +4195,7 @@ def song_comments(song_id, offset='0'):
 
 @plugin.route('/load_more_comments/<offset>/')
 def load_more_comments(offset='0'):
-    """加载更多评论（从存储中获取歌曲ID）"""
+    """加载更多评论（增量加载：先返回已缓存的评论，再追加新评论）"""
     xbmc.log(f'[Music Comments] Loading more comments, offset: {offset}', xbmc.LOGDEBUG)
     
     # 从存储中获取歌曲ID
@@ -4144,8 +4211,65 @@ def load_more_comments(offset='0'):
     
     xbmc.log(f'[Music Comments] Loaded song_id from storage: {song_id}', xbmc.LOGDEBUG)
     
-    # 调用评论功能
-    return song_comments(song_id=song_id, offset=offset)
+    # 增量加载：从缓存读取之前已加载的评论
+    import json
+    cached_items = []
+    cache_json = xbmcgui.Window(10000).getProperty('bili_comment_cache')
+    if cache_json:
+        try:
+            cached_items = json.loads(cache_json)
+            xbmc.log(f'[Music Comments] Loaded {len(cached_items)} cached items', xbmc.LOGDEBUG)
+        except:
+            cached_items = []
+    
+    # 获取新评论（从 offset 开始）
+    new_items = song_comments(song_id=song_id, offset=offset)
+    
+    # 合并：缓存项 + 新评论项（排除新评论中的触发器项，后面会重新添加）
+    # 新评论中可能包含热门评论（offset=0时），增量加载时需要排除重复的热门评论
+    # 由于 offset > 0 时 API 不会返回 hotComments，所以新评论不会和缓存重复
+    new_comment_items = [item for item in new_items if item.get('label') != '']
+    
+    all_items = cached_items + new_comment_items
+    
+    # 重新添加触发器项（如果还有更多评论）
+    trigger_item = [item for item in new_items if item.get('label') == '']
+    if trigger_item:
+        all_items.append(trigger_item[0])
+    
+    # 更新缓存
+    try:
+        xbmcgui.Window(10000).setProperty('bili_comment_cache', json.dumps(all_items if not trigger_item else all_items[:-1]))
+    except:
+        pass
+    
+    xbmc.log(f'[Music Comments] Incremental load: {len(cached_items)} cached + {len(new_comment_items)} new = {len(all_items)} total', xbmc.LOGDEBUG)
+    
+    return all_items
+
+
+@plugin.route('/trigger_comment_load/')
+def trigger_comment_load():
+    """关闭当前评论dialog并用新URL重新打开以加载更多评论"""
+    import json
+    next_url = xbmcgui.Window(10000).getProperty('bili_comment_next_page')
+    xbmc.log(f'[Music Comments] trigger_comment_load called, next_url: {next_url}', xbmc.LOGDEBUG)
+    
+    if not next_url:
+        xbmc.log('[Music Comments] No next_url available', xbmc.LOGERROR)
+        return
+    
+    # 设置评论内容URL到Window Property，供dialog的<content>动态读取
+    xbmcgui.Window(10000).setProperty('bili_comment_content_url', next_url)
+    xbmc.log(f'[Music Comments] Set bili_comment_content_url to: {next_url}', xbmc.LOGDEBUG)
+    
+    # 步骤1: 关闭当前dialog 1142
+    xbmc.executebuiltin('DialogClose(1142)')
+    xbmc.log('[Music Comments] Closed dialog 1142', xbmc.LOGDEBUG)
+    
+    # 步骤2: 延迟1秒后重新打开dialog
+    xbmc.executebuiltin('AlarmClock(bili_comment_reopen,ActivateWindow(1142),00:01,silent)')
+    xbmc.log('[Music Comments] Set alarm to reopen dialog', xbmc.LOGDEBUG)
 
 
 @plugin.route('/current_song_comments/<offset>/')
