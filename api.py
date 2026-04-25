@@ -7,7 +7,7 @@ import requests
 import re
 import hashlib
 from urllib.parse import urlparse, urlencode
-from encrypt import encrypted_request
+from encrypt import encrypted_request, eapi_encrypt, eapi_decrypt
 from xbmcswift2 import xbmc, xbmcaddon, xbmcplugin # type: ignore
 from http.cookiejar import Cookie
 from http.cookiejar import MozillaCookieJar
@@ -170,6 +170,60 @@ class NetEase(object):
             comment_url=None,
             rest={},
         )
+
+    def eapi_request(self, path, params={}, default={"code": -1}):
+        """发送 EAPI 加密请求
+
+        EAPI 是网易云客户端使用的加密接口，服务端会实际处理请求数据。
+        weapi 只是遥测端点，eapi 才是功能端点。
+
+        加密方式: AES-128-ECB, 密钥 e82ckenh8dichen8
+        请求域名: interface.music.163.com
+        请求路径: /eapi/ + path 去掉 /api 前缀
+
+        Args:
+            path: API 路径, 如 '/api/feedback/weblog'
+            params: 请求参数
+            default: 默认返回值
+        """
+        endpoint = "https://interface.music.163.com/eapi" + path.replace('/api', '', 1)
+        api_path = path  # 加密时使用原始 /api/ 路径
+
+        csrf_token = ""
+        for cookie in self.session.cookies:
+            if cookie.name == "__csrf":
+                csrf_token = cookie.value
+                break
+        params.update({"csrf_token": csrf_token})
+
+        data = default
+        encrypted = eapi_encrypt(api_path, params)
+
+        # eapi 专用 headers
+        eapi_headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://music.163.com',
+            'Referer': 'https://music.163.com',
+        }
+
+        try:
+            if not self.enable_proxy:
+                resp = self.session.post(endpoint, data=encrypted, headers=eapi_headers, timeout=DEFAULT_TIMEOUT)
+            else:
+                resp = self.session.post(endpoint, data=encrypted, headers=eapi_headers, timeout=DEFAULT_TIMEOUT, proxies=self.proxies)
+            if resp.text:
+                try:
+                    data = eapi_decrypt(resp.text)
+                except (ValueError, json.JSONDecodeError):
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        pass
+        except requests.exceptions.RequestException as e:
+            xbmc.log(f'[EAPI] 请求异常: {str(e)}', xbmc.LOGERROR)
+        finally:
+            return data
 
     def request(self, method, path, params={}, default={"code": -1}, custom_cookies={'os': 'android', 'appver': '9.2.70'}, use_mobile_header=False):
         """发送 API 请求
@@ -993,54 +1047,48 @@ class NetEase(object):
         """
         上传歌曲播放记录到网易云
 
+        端点: /weapi/feedback/weblog (weapi 加密)
+        参考: NeteaseCloudMusicApiEnhanced/module/scrobble.js
+
+        注意: 此端点仅影响"听歌排行"(/api/v1/play/record)，
+        不会写入"最近播放"列表(/api/play-record/song/list)。
+        "最近播放"由官方客户端本地同步，第三方API无法写入。
+
         Args:
             id: 歌曲ID
             sourceId: 来源ID
             time: 播放时长（秒）
         """
-        # 网易云播放记录上报 API
-        # 使用 /weapi/feedback/weblog API
-        path = "/weapi/feedback/weblog"
-        
-        # 根据网易云官方 API 文档，使用标准参数格式
-        params = {'logs': json.dumps([{
+        logs_payload = [{
             'action': 'play',
             'json': {
                 "download": 0,
                 "end": 'playend',
-                "id": str(id),
-                "sourceId": str(sourceId),
-                "time": str(time),
+                "id": id,
+                "sourceId": sourceId,
+                "time": time,
                 "type": 'song',
                 "wifi": 0,
-                "source": 'list'
+                "source": 'list',
+                "mainsite": 1,
+                "content": ''
             }
-        }], ensure_ascii=False)}
+        }]
+        params = {'logs': json.dumps(logs_payload, ensure_ascii=False)}
 
+        # 使用 weapi 加密 (与 NeteaseCloudMusicApiEnhanced 一致)
         try:
-            result = self.request("POST", path, params)
-            print(f"[Daka] API 响应: song_id={id}")
-            print(f"[Daka]   - code: {result.get('code')}")
-            print(f"[Daka]   - msg: {result.get('msg')}")
-            print(f"[Daka]   - data: {result.get('data')}")
-            print(f"[Daka]   - 完整响应: {result}")
-            
-            # 检查响应状态
+            weapi_path = "/weapi/feedback/weblog"
+            result = self.request("POST", weapi_path, params.copy())
             if result.get('code') == 200:
-                # 检查 data 字段，有些 API 返回 200 但 data 为空表示失败
-                data = result.get('data', {})
-                if data or result.get('msg') == 'success':
-                    print(f"[Daka] 播放记录上传成功: song_id={id}, time={time}s, sourceId={sourceId}")
-                    return result
-                else:
-                    print(f"[Daka] API 返回 200 但 data 为空，可能未成功")
-                    
+                xbmc.log(f'[Daka] 播放记录上传成功: song_id={id}, time={time}s', xbmc.LOGINFO)
+                return result
+            else:
+                xbmc.log(f'[Daka] 播放记录上传失败: code={result.get("code")}', xbmc.LOGWARNING)
         except Exception as e:
-            print(f"[Daka] 播放记录上传异常: song_id={id}, error={str(e)}")
-            import traceback
-            traceback.print_exc()
+            xbmc.log(f'[Daka] weapi 异常: {str(e)}', xbmc.LOGERROR)
 
-        # 返回失败结果
+        xbmc.log(f'[Daka] 播放记录上传失败: song_id={id}', xbmc.LOGWARNING)
         return {"code": -1, "msg": "播放记录上传失败"}
 
     # 云盘歌曲

@@ -13,7 +13,7 @@ from future.builtins import int, pow
 
 PY3 = sys.version_info.major >= 3
 
-__all__ = ["encrypted_id", "encrypted_request"]
+__all__ = ["encrypted_id", "encrypted_request", "eapi_encrypt", "eapi_decrypt"]
 
 MODULUS = (
     "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7"
@@ -72,3 +72,59 @@ def rsa(text, pubkey, modulus):
 
 def create_key(size):
     return binascii.hexlify(os.urandom(size))[:16]
+
+
+# EAPI 加密算法 (用于上传播放记录等需要服务端实际处理的接口)
+# 参考: https://github.com/Binaryify/NeteaseCloudMusicApi/blob/master/util/crypto.js
+# eapi 使用 AES-128-ECB 加密，密钥为 e82ckenh8dichen8
+EAPI_KEY = b'e82ckenh8dichen8'
+
+
+def _eapi_aes_encrypt(data, key=EAPI_KEY):
+    """EAPI AES-128-ECB 加密 with PKCS7 padding"""
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    pad = 16 - len(data) % 16
+    data = data + bytes([pad] * pad)
+    cipher = AES.new(key, AES.MODE_ECB)
+    return cipher.encrypt(data)
+
+
+def _eapi_aes_decrypt(data, key=EAPI_KEY):
+    """EAPI AES-128-ECB 解密 with PKCS7 unpadding"""
+    cipher = AES.new(key, AES.MODE_ECB)
+    decrypted = cipher.decrypt(data)
+    pad = decrypted[-1]
+    return decrypted[:-pad]
+
+
+def eapi_encrypt(url_path, data):
+    """EAPI 加密请求
+
+    Args:
+        url_path: API 路径, 如 '/api/feedback/weblog'
+        data: 请求参数 dict
+
+    Returns:
+        dict: {'params': hex_uppercase_encrypted_data}
+    """
+    text = json.dumps(data, separators=(',', ':'), ensure_ascii=False)
+    message = 'nobody{}use{}md5forencrypt'.format(url_path, text)
+    digest = hashlib.md5(message.encode('utf-8')).hexdigest()
+    encrypt_text = '{}-36cd479b6b5-{}-36cd479b6b5-{}'.format(url_path, text, digest)
+    encrypted = _eapi_aes_encrypt(encrypt_text)
+    return {'params': encrypted.hex().upper()}
+
+
+def eapi_decrypt(response_hex):
+    """EAPI 解密响应
+
+    Args:
+        response_hex: hex 编码的加密响应
+
+    Returns:
+        dict: 解密后的 JSON 数据
+    """
+    raw = bytes.fromhex(response_hex)
+    decrypted = _eapi_aes_decrypt(raw)
+    return json.loads(decrypted.decode('utf-8'))

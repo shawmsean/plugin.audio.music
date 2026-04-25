@@ -1103,7 +1103,14 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
                 '播放失败', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
         else:
             if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
-                music.daka(song_id, sourceId=sourceId, time=dt)
+                try:
+                    result = music.daka(song_id, sourceId=sourceId, time=dt)
+                    if result.get('code') == 200:
+                        xbmc.log(f'[Play] 播放记录上传成功: song_id={song_id}', xbmc.LOGINFO)
+                    else:
+                        xbmc.log(f'[Play] 播放记录上传失败: {result.get("msg", "未知错误")}', xbmc.LOGWARNING)
+                except Exception as e:
+                    xbmc.log(f'[Play] 播放记录上传异常: {str(e)}', xbmc.LOGERROR)
     elif meida_type == 'dj':
         result = music.dj_detail(song_id)
         song_id = result.get('program', {}).get('mainSong', {}).get('id')
@@ -1250,12 +1257,47 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             pass
 
         xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, listitem)
+
+        # setResolvedUrl之后，延迟获取播放位置并设置到Window Property
+        # 延迟是必要的：Kodi在setResolvedUrl后异步更新播放位置，
+        # 自动播放下一首时getposition()在setResolvedUrl之前返回旧位置
+        def _update_playlist_position():
+            import time
+            time.sleep(1.0)
+            try:
+                playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
+                pos = playlist.getposition()
+                if pos >= 0:
+                    xbmcgui.Window(10000).setProperty('nc_playlist_position', str(pos))
+                    xbmc.log('[plugin.audio.music] Playlist position (0-based): %d' % pos, xbmc.LOGINFO)
+            except Exception as e:
+                xbmc.log('[plugin.audio.music] Error getting playlist position: %s' % str(e), xbmc.LOGERROR)
+
+        import threading
+        t = threading.Thread(target=_update_playlist_position, daemon=True)
+        t.start()
     except Exception:
         # 回退到原有方式（兼容未知 xbmcswift2 版本）
         try:
             plugin.set_resolved_url(url)
         except Exception:
             pass
+
+@plugin.route('/playlist_position/')
+def playlist_position():
+    """供皮肤端实时获取当前播放位置(0-based)，设置到Window Property。
+    皮肤端在打开OSD播放列表时通过RunPlugin调用此路由。"""
+    try:
+        playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
+        pos = playlist.getposition()
+        if pos >= 0:
+            xbmcgui.Window(10000).setProperty('nc_playlist_position', str(pos))
+            xbmc.log('[plugin.audio.music] Playlist position (0-based): %d' % pos, xbmc.LOGINFO)
+        else:
+            xbmc.log('[plugin.audio.music] Playlist position: no active playlist', xbmc.LOGINFO)
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] Error getting playlist position: %s' % str(e), xbmc.LOGERROR)
+
 
 @plugin.route('/history_by_album/')
 def history_by_album():
