@@ -340,3 +340,7 @@ msgstr "缓存预热"
 msgctxt "#30082"
 msgid "Auto preload cache on startup"
 msgstr "启动时自动预加载缓存"
+
+msgctxt "#30083"
+msgid "Enable Source Fallback"
+msgstr "启用播放换源"

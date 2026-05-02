@@ -29,6 +29,7 @@
 		<setting id="hide_cover_songs" type="bool" label="30036" default="false" />
 		<setting id="show_album_name" type="bool" label="30037" default="false" />
 		<setting id="upload_play_record" type="bool" label="30038" default="true" />
+		<setting id="enable_source_fallback" type="bool" label="30083" default="true" />
 		<setting label="30039" type="action" action="RunPlugin(plugin://plugin.audio.music/delete_thumbnails/)"/>
 	</category>
 	<category label="30040">

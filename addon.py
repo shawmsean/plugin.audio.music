@@ -1081,7 +1081,17 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             else:
                 url = urls[0]
     elif meida_type == 'song':
-        songs = music.songs_url_v1([song_id], level=level, source=source).get("data", [])
+        _song_name = ''
+        _artist_name = ''
+        try:
+            _detail = music.songs_detail([song_id])
+            _info = _detail.get('songs', [])[0] if _detail else {}
+            _song_name = _info.get('name', '')
+            _ar = _info.get('ar', []) or _info.get('artists', [])
+            _artist_name = _ar[0].get('name', '') if _ar else ''
+        except Exception:
+            pass
+        songs = music.songs_url_v1([song_id], level=level, source=source, song_names=[_song_name] if _song_name else None, artist_names=[_artist_name] if _artist_name else None).get("data", [])
         urls = [song['url'] for song in songs]
         # 一般是网络错误
         if len(urls) == 0:
@@ -1223,6 +1233,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             if artist_id:
                 xbmcgui.Window(10000).setProperty('nc_current_artist_id', str(artist_id))
                 xbmcgui.Window(10000).setProperty('nc_current_artist_name', artist_name)
+            xbmcgui.Window(10000).setProperty('nc_music_plugin_id', 'plugin.audio.music')
         except Exception as e:
             xbmc.log('[plugin.audio.music] Error adding play history: %s' % str(e), xbmc.LOGERROR)
 
@@ -1267,9 +1278,12 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             try:
                 playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
                 pos = playlist.getposition()
+                size = playlist.size()
                 if pos >= 0:
                     xbmcgui.Window(10000).setProperty('nc_playlist_position', str(pos))
-                    xbmc.log('[plugin.audio.music] Playlist position (0-based): %d' % pos, xbmc.LOGINFO)
+                    xbmc.log('[plugin.audio.music] Playlist position (0-based): %d, playlist size: %d' % (pos, size), xbmc.LOGINFO)
+                else:
+                    xbmc.log('[plugin.audio.music] Playlist position: negative (no active playback), size: %d' % size, xbmc.LOGINFO)
             except Exception as e:
                 xbmc.log('[plugin.audio.music] Error getting playlist position: %s' % str(e), xbmc.LOGERROR)
 
@@ -1290,13 +1304,54 @@ def playlist_position():
     try:
         playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
         pos = playlist.getposition()
+        size = playlist.size()
         if pos >= 0:
             xbmcgui.Window(10000).setProperty('nc_playlist_position', str(pos))
-            xbmc.log('[plugin.audio.music] Playlist position (0-based): %d' % pos, xbmc.LOGINFO)
+            xbmc.log('[plugin.audio.music] playlist_position: pos=%d (0-based), size=%d' % (pos, size), xbmc.LOGINFO)
         else:
-            xbmc.log('[plugin.audio.music] Playlist position: no active playlist', xbmc.LOGINFO)
+            xbmc.log('[plugin.audio.music] playlist_position: no active playlist, size=%d' % size, xbmc.LOGINFO)
     except Exception as e:
         xbmc.log('[plugin.audio.music] Error getting playlist position: %s' % str(e), xbmc.LOGERROR)
+
+
+@plugin.route('/playlist_focus_current/')
+def playlist_focus_current():
+    """延迟1秒后获取播放位置并执行SetFocus，供1140 onload调用。
+    延迟确保playlistmusic://列表加载完成且property已更新。"""
+    def _focus():
+        import time
+        time.sleep(1.0)
+        try:
+            playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
+            pos = playlist.getposition()
+            size = playlist.size()
+            if pos >= 0:
+                xbmc.log('[plugin.audio.music] playlist_focus_current: pos=%d, size=%d' % (pos, size), xbmc.LOGINFO)
+                xbmc.executebuiltin('SetFocus(7000,%d,absolute)' % pos)
+            else:
+                xbmc.log('[plugin.audio.music] playlist_focus_current: no active playlist, size=%d' % size, xbmc.LOGWARNING)
+        except Exception as e:
+            xbmc.log('[plugin.audio.music] playlist_focus_current error: %s' % str(e), xbmc.LOGERROR)
+    import threading
+    t = threading.Thread(target=_focus, daemon=True)
+    t.start()
+
+
+@plugin.route('/play_playlist_offset/')
+def play_playlist_offset():
+    offset = xbmcgui.Window(10000).getProperty('nc_play_offset')
+    if offset:
+        offset = int(offset) - 1
+        if offset < 0:
+            offset = 0
+    else:
+        offset = 0
+    playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
+    if playlist.size() > 0 and offset < playlist.size():
+        xbmc.Player().play(playlist, startpos=offset)
+        xbmc.log('[plugin.audio.music] play_playlist_offset: playing offset=%d' % offset, xbmc.LOGINFO)
+    else:
+        xbmc.log('[plugin.audio.music] play_playlist_offset: invalid offset=%d, playlist size=%d' % (offset, playlist.size()), xbmc.LOGWARNING)
 
 
 @plugin.route('/history_by_album/')
@@ -4146,18 +4201,47 @@ def song_comments(song_id, offset='0'):
             liked_count = comment.get('likedCount', 0)
             time_str = comment.get('timeStr', '')
             avatar_url = user.get('avatarUrl', '')
+            be_replied = comment.get('beReplied', [])
+            show_floor = comment.get('showFloorComment', {})
+            reply_count = len(be_replied) or show_floor.get('replyCount', 0)
+            xbmc.log(f'[Music Comments] hot comment {i}: beReplied={len(be_replied)} showFloor={show_floor.get("replyCount",0)} reply_count={reply_count}', xbmc.LOGDEBUG)
+            reply_summary = ''
+            if be_replied:
+                r = be_replied[0]
+                r_nick = r.get('user', {}).get('nickname', '')
+                r_content = r.get('content', '')[:40]
+                reply_summary = f'{r_nick}: {r_content}'
+                if len(be_replied) > 1:
+                    reply_summary += f' (+{len(be_replied)-1})'
+            elif reply_count > 0:
+                reply_summary = f'{reply_count} replies'
+
+            props = {
+                'comment_content': content,
+                'comment_nickname': nickname,
+                'comment_liked_count': str(liked_count),
+                'comment_time': time_str,
+                'comment_type': 'hot',
+                'comment_index': str(i),
+                'comment_id': str(comment.get('commentId', '')),
+                'comment_song_id': str(song_id),
+            }
+            if reply_count > 0:
+                props['comment_reply_count'] = str(reply_count)
+            if reply_summary:
+                props['comment_reply_summary'] = reply_summary
+            if be_replied:
+                reply_lines = []
+                for r in be_replied:
+                    r_nick = r.get('user', {}).get('nickname', '')
+                    r_content = r.get('content', '')
+                    reply_lines.append(f'{r_nick}: {r_content}')
+                props['comment_reply_data'] = '\n'.join(reply_lines)
 
             items.append({
                 'label': nickname,
                 'path': plugin.url_for('song_comments', song_id=song_id, offset=str(offset)),
-                'properties': {
-                    'comment_content': content,
-                    'comment_nickname': nickname,
-                    'comment_liked_count': str(liked_count),
-                    'comment_time': time_str,
-                    'comment_type': 'hot',
-                    'comment_index': str(i),
-                },
+                'properties': props,
                 'thumbnail': avatar_url,
                 'icon': avatar_url,
                 'is_playable': False,
@@ -4172,23 +4256,84 @@ def song_comments(song_id, offset='0'):
             liked_count = comment.get('likedCount', 0)
             time_str = comment.get('timeStr', '')
             avatar_url = user.get('avatarUrl', '')
+            be_replied = comment.get('beReplied', [])
+            show_floor = comment.get('showFloorComment', {})
+            reply_count = len(be_replied) or show_floor.get('replyCount', 0)
+            xbmc.log(f'[Music Comments] normal comment {i}: beReplied={len(be_replied)} showFloor={show_floor.get("replyCount",0)} reply_count={reply_count}', xbmc.LOGDEBUG)
+            reply_summary = ''
+            if be_replied:
+                r = be_replied[0]
+                r_nick = r.get('user', {}).get('nickname', '')
+                r_content = r.get('content', '')[:40]
+                reply_summary = f'{r_nick}: {r_content}'
+                if len(be_replied) > 1:
+                    reply_summary += f' (+{len(be_replied)-1})'
+            elif reply_count > 0:
+                reply_summary = f'{reply_count} replies'
 
             comment_index = (offset if not hot_comments else 0) + i
+            props = {
+                'comment_content': content,
+                'comment_nickname': nickname,
+                'comment_liked_count': str(liked_count),
+                'comment_time': time_str,
+                'comment_type': 'normal',
+                'comment_index': str(comment_index),
+                'comment_id': str(comment.get('commentId', '')),
+                'comment_song_id': str(song_id),
+            }
+            if reply_count > 0:
+                props['comment_reply_count'] = str(reply_count)
+            if reply_summary:
+                props['comment_reply_summary'] = reply_summary
+            if be_replied:
+                reply_lines = []
+                for r in be_replied:
+                    r_nick = r.get('user', {}).get('nickname', '')
+                    r_content = r.get('content', '')
+                    reply_lines.append(f'{r_nick}: {r_content}')
+                props['comment_reply_data'] = '\n'.join(reply_lines)
+
             items.append({
                 'label': nickname,
                 'path': plugin.url_for('song_comments', song_id=song_id, offset=str(offset)),
-                'properties': {
-                    'comment_content': content,
-                    'comment_nickname': nickname,
-                    'comment_liked_count': str(liked_count),
-                    'comment_time': time_str,
-                    'comment_type': 'normal',
-                    'comment_index': str(comment_index),
-                },
+                'properties': props,
                 'thumbnail': avatar_url,
                 'icon': avatar_url,
                 'is_playable': False,
             })
+
+        # 预取前5条有回复但无reply_data的评论的回复摘要
+        floor_prefetched = 0
+        floor_max = 5
+        for item in items:
+            if floor_prefetched >= floor_max:
+                break
+            props = item.get('properties', {})
+            if props.get('comment_reply_count') and not props.get('comment_reply_data'):
+                cid = props.get('comment_id', '')
+                sid = props.get('comment_song_id', '')
+                if cid and sid:
+                    try:
+                        floor_resp = music.comment_floor(music_id=int(sid), comment_id=int(cid), offset=0, limit=2)
+                        floor_comments = floor_resp.get('data', {}).get('comments', []) if isinstance(floor_resp.get('data'), dict) else floor_resp.get('comments', [])
+                        if floor_comments:
+                            summary_parts = []
+                            reply_lines = []
+                            for fc in floor_comments[:2]:
+                                fc_nick = fc.get('user', {}).get('nickname', '')
+                                fc_content = fc.get('content', '')[:40]
+                                summary_parts.append(f'{fc_nick}: {fc_content}')
+                                reply_lines.append(f'{fc_nick}: {fc.get("content", "")}')
+                            total_count = int(props.get('comment_reply_count', '0'))
+                            summary = summary_parts[0]
+                            if total_count > 1:
+                                summary += f' (+{total_count - 1})'
+                            props['comment_reply_summary'] = summary
+                            props['comment_reply_data'] = '\n'.join(reply_lines)
+                            floor_prefetched += 1
+                    except Exception:
+                        pass
 
         # 记录已加载评论总数，供皮肤端增量加载使用
         current_count = offset + len(hot_comments) + len(comments)
@@ -4312,6 +4457,78 @@ def trigger_comment_load():
     # 步骤2: 延迟1秒后重新打开dialog
     xbmc.executebuiltin('AlarmClock(bili_comment_reopen,ActivateWindow(1142),00:01,silent)')
     xbmc.log('[Music Comments] Set alarm to reopen dialog', xbmc.LOGDEBUG)
+
+
+@plugin.route('/show_comment_replies/')
+def show_comment_replies():
+    """显示评论的回复内容"""
+    title = xbmcgui.Window(10000).getProperty('comment_reply_title')
+    content = xbmcgui.Window(10000).getProperty('comment_reply_content')
+    reply_summary = xbmcgui.Window(10000).getProperty('comment_reply_summary')
+    reply_count = xbmcgui.Window(10000).getProperty('comment_reply_count')
+    cached = xbmcgui.Window(10000).getProperty('bili_comment_cache')
+    if not cached:
+        return
+    try:
+        all_items = json.loads(cached)
+    except Exception:
+        return
+    for item in all_items:
+        props = item.get('properties', {})
+        if item.get('label') == title and props.get('comment_content', '')[:60] == content[:60]:
+            count = int(props.get('comment_reply_count', '0'))
+            comment_id = props.get('comment_id', '')
+            song_id = props.get('comment_song_id', '')
+            lines = [content, '', f'--- {count} replies ---', '']
+            if count > 0 and comment_id and song_id:
+                xbmc.log(f'[Music Comments] Fetching floor replies: song_id={song_id} comment_id={comment_id} count={count}', xbmc.LOGDEBUG)
+                try:
+                    floor_comments = []
+                    page = 0
+                    max_pages = 5
+                    per_page = 20
+                    while page < max_pages:
+                        resp = music.comment_floor(music_id=int(song_id), comment_id=int(comment_id), offset=page * per_page, limit=per_page)
+                        if resp.get('code') != 200:
+                            if page == 0:
+                                xbmc.log(f'[Music Comments] Floor API error: {json.dumps(resp, ensure_ascii=False)[:200]}', xbmc.LOGDEBUG)
+                            break
+                        batch = resp.get('data', {}).get('comments', []) if isinstance(resp.get('data'), dict) else resp.get('comments', [])
+                        if not batch and isinstance(resp.get('data'), list):
+                            batch = resp['data']
+                        if not batch:
+                            for k in resp:
+                                v = resp[k]
+                                if isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict) and 'content' in v[0]:
+                                    batch = v
+                                    break
+                        if batch:
+                            floor_comments.extend(batch)
+                        if len(batch) < per_page:
+                            break
+                        page += 1
+                    xbmc.log(f'[Music Comments] Floor API got {len(floor_comments)} reply comments total', xbmc.LOGDEBUG)
+                    if floor_comments:
+                        for fc in floor_comments:
+                            fc_nick = fc.get('user', {}).get('nickname', '')
+                            fc_content = fc.get('content', '')
+                            lines.append(f'{fc_nick}: {fc_content}')
+                            lines.append('')
+                        if len(floor_comments) < count:
+                            lines.append(f'... and {count - len(floor_comments)} more')
+                    else:
+                        if reply_summary:
+                            lines.append(reply_summary)
+                except Exception as e:
+                    xbmc.log(f'[Music Comments] Floor API error: {e}', xbmc.LOGERROR)
+                    if reply_summary:
+                        lines.append(reply_summary)
+            elif reply_summary:
+                lines.append(reply_summary)
+            if len(lines) <= 4:
+                return
+            xbmcgui.Dialog().textviewer(f'Replies to {title}', '\n'.join(lines))
+            return
 
 
 @plugin.route('/current_song_comments/<offset>/')

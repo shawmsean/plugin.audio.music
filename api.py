@@ -555,6 +555,12 @@ class NetEase(object):
         params = dict(rid=music_id, offset=offset, total=total, limit=limit)
         return self.request("POST", path, params)
 
+    def comment_floor(self, music_id, comment_id, offset=0, limit=20):
+        path = "/weapi/resource/comment/floor/get"
+        thread_id = 'R_SO_4_{}'.format(music_id)
+        params = dict(parentCommentId=comment_id, threadId=thread_id, time=-1, limit=limit, offset=offset)
+        return self.request("POST", path, params)
+
     # song ids --> song urls ( details )
     def songs_detail(self, ids):
         path = "/weapi/v3/song/detail"
@@ -703,60 +709,108 @@ class NetEase(object):
             used_source = None
             song_name = song_names[idx] if idx < len(song_names) else None
             artist_name = artist_names[idx] if idx < len(artist_names) else None
+            if isinstance(song_name, (list, tuple)):
+                song_name = song_name[0] if song_name else None
+            if isinstance(artist_name, (list, tuple)):
+                artist_name = artist_name[0] if artist_name else None
+            song_name = str(song_name) if song_name else None
+            artist_name = str(artist_name) if artist_name else None
 
-            # 1. 如果 source 支持,优先使用 LXMUSIC API
+            LX_QUALITY_MAP = {'standard': '128k', 'exceed': '320k', 'high': '320k', 'lossless': 'flac', 'hires': 'flac24bit', 'dolby': 'flac24bit', 'jyeffect': 'flac24bit', 'jymaster': 'flac24bit'}
+            LX_QUALITY_FALLBACK = {'flac24bit': 'flac', 'flac': '320k', '320k': '128k', 'hires': 'flac', 'atmos': 'flac', 'atmos_plus': 'flac', 'master': 'flac'}
+            LX_SOURCE_FALLBACK = {'tx': ['kw', 'wy'], 'kw': ['tx', 'wy'], 'wy': ['tx', 'kw'], 'kg': ['tx', 'kw'], 'mg': ['tx', 'kw'], 'netease': ['tx', 'kw'], 'tencent': ['kw', 'wy'], 'kuwo': ['tx', 'wy']}
+
+            enable_source_fallback = xbmcaddon.Addon('plugin.audio.music').getSetting('enable_source_fallback') == 'true'
+
+            lx_quality = LX_QUALITY_MAP.get(level, '320k')
+
+            # 1. LXMUSIC 原音源 + 音质降级
             if lxmusic_source:
                 try:
-                    xbmc.log("plugin.audio.music: songs_url_v1 trying LXMUSIC id={} source={}".format(_id, lxmusic_source), xbmc.LOGDEBUG)
-                    url = self._lxmusic_get_music_url(lxmusic_source, str(_id), quality)
+                    url = self._lxmusic_get_music_url(lxmusic_source, str(_id), lx_quality, max_retries=1)
+                    if url and self._check_url_valid(url):
+                        used_source = 'lxmusic'
+                except Exception:
+                    url = None
 
-                    if url:
-                        # 检查 URL 是否可用
-                        if self._check_url_valid(url):
-                            used_source = 'lxmusic'
-                            xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC success id={} url={}".format(_id, url), xbmc.LOGDEBUG)
-                        else:
-                            xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC URL不可用 id={}".format(_id), xbmc.LOGWARNING)
+                if not url and lx_quality in LX_QUALITY_FALLBACK:
+                    fb_quality = lx_quality
+                    while not url and fb_quality in LX_QUALITY_FALLBACK:
+                        fb_quality = LX_QUALITY_FALLBACK[fb_quality]
+                        try:
+                            url = self._lxmusic_get_music_url(lxmusic_source, str(_id), fb_quality, max_retries=1)
+                            if url and self._check_url_valid(url):
+                                used_source = 'lxmusic_fallback_%s' % fb_quality
+                                xbmc.log("plugin.audio.music: LXMUSIC quality fallback to %s success" % fb_quality, xbmc.LOGINFO)
+                                break
                             url = None
-                except Exception as e:
-                    xbmc.log("plugin.audio.music: songs_url_v1 LXMUSIC failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
-                    url = None
+                        except Exception:
+                            pass
 
-                # 1.5. 如果 LXMUSIC 返回的链接不可用，尝试搜索回退
-                if not url and (song_name or artist_name):
-                    xbmc.log("plugin.audio.music: songs_url_v1 尝试搜索回退 id={} song_name={} artist_name={}".format(
-                        _id, song_name, artist_name), xbmc.LOGDEBUG)
-                    url = self._search_and_retry_lxmusic(str(_id), song_name, artist_name, lxmusic_source, quality)
-                    
-                    if url:
-                        used_source = 'lxmusic_search'
-
-            # 2. 如果 LXMUSIC 失败或 source 是 netease，尝试 GD Music API
+            # 2. 换源搜索 + 音质降级
             if not url:
+                xbmc.log("plugin.audio.music: url=None, enable_source_fallback=%s, song_name=%s, artist_name=%s" % (enable_source_fallback, song_name, artist_name), xbmc.LOGINFO)
+            if not url and enable_source_fallback and (song_name or artist_name):
                 try:
-                    xbmc.log("plugin.audio.music: songs_url_v1 trying GD Music API id={}".format(_id), xbmc.LOGDEBUG)
-                    # 将 level 转换为 GD Music API 支持的音质格式
-                    gd_quality = self._convert_level_to_gdmusic_quality(level)
-                    play_url, actual_source = self._gdmusic_get_play_url_with_fallback(
-                        str(_id), quality=gd_quality, song_name=song_name, artist_name=artist_name, original_source=source
-                    )
+                    _sn = str(song_name) if song_name else ''
+                    _an = str(artist_name) if artist_name else ''
+                    search_keyword = ('%s %s' % (_an, _sn)).strip()
+                    xbmc.log("plugin.audio.music: 换源搜索 keyword=%s lxmusic_source=%s lx_quality=%s" % (search_keyword, lxmusic_source, lx_quality), xbmc.LOGINFO)
 
-                    if play_url:
-                        url = play_url
-                        used_source = 'gdmusic_%s' % actual_source
-                        xbmc.log("plugin.audio.music: songs_url_v1 GD Music success id={} url={} source={}".format(_id, url, actual_source), xbmc.LOGDEBUG)
-                    else:
-                        xbmc.log("plugin.audio.music: songs_url_v1 GD Music failed id={}".format(_id), xbmc.LOGWARNING)
-                except Exception as e:
-                    xbmc.log("plugin.audio.music: songs_url_v1 GD Music failed id={} error={}".format(_id, str(e)), xbmc.LOGWARNING)
-                    url = None
-
-            # 2.5. 如果 GD Music 也失败，且支持搜索回退，尝试搜索回退
-            if not url and lxmusic_source:
-                xbmc.log("plugin.audio.music: songs_url_v1 GD Music失败，尝试搜索回退 id={}".format(_id), xbmc.LOGDEBUG)
-                url = self._search_and_retry_lxmusic(str(_id), song_name, artist_name, lxmusic_source, quality)
-                if url:
-                    used_source = 'lxmusic_search_after_gdmusic'
+                    SUPPORTED_LX_SOURCES = {'tx', 'kw', 'wy', 'kg', 'mg'}
+                    fallback_sources = LX_SOURCE_FALLBACK.get(lxmusic_source, ['tx', 'kw'])
+                    for alt_src in fallback_sources:
+                        if alt_src not in SUPPORTED_LX_SOURCES:
+                            continue
+                        xbmc.log("plugin.audio.music: 换源尝试 %s" % alt_src, xbmc.LOGINFO)
+                        alt_songs = []
+                        try:
+                            if alt_src == 'tx':
+                                _r = requests.get('https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg', params={'key': search_keyword, 'num': 10}, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://y.qq.com/'}, timeout=10)
+                                _d = _r.json().get('data', {}).get('song', {}).get('itemlist', [])
+                                alt_songs = [{'id': s.get('mid', ''), 'name': s.get('name', '')} for s in _d]
+                            elif alt_src == 'kw':
+                                _r = requests.get('https://search.kuwo.cn/r.s', params={'all': search_keyword, 'ft': 'music', 'pn': 0, 'rn': 5, 'rformat': 'json', 'encoding': 'utf8', 'pcjson': 1}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                                _d = _r.json().get('abslist', [])
+                                alt_songs = []
+                                for s in _d:
+                                    _rid = s.get('MUSICRID', '')
+                                    _num_id = _rid.split('_')[1] if '_' in _rid else s.get('DC_TARGETID', '')
+                                    if _num_id:
+                                        alt_songs.append({'id': str(_num_id), 'name': s.get('SONGNAME','')})
+                        except Exception as ex:
+                            xbmc.log("plugin.audio.music: 换源搜索 %s 失败: %s" % (alt_src, str(ex)), xbmc.LOGWARNING)
+                            alt_songs = []
+                        xbmc.log("plugin.audio.music: 换源搜索 %s 结果: %d首" % (alt_src, len(alt_songs) if alt_songs else 0), xbmc.LOGINFO)
+                        if not alt_songs:
+                            continue
+                        for alt_song in alt_songs:
+                            alt_id = str(alt_song.get('id', ''))
+                            alt_name = alt_song.get('name', '') or alt_song.get('songname', '')
+                            if not alt_name:
+                                continue
+                            if song_name and (song_name not in alt_name and alt_name not in song_name):
+                                continue
+                            xbmc.log("plugin.audio.music: 换源匹配 %s: %s (id=%s)" % (alt_src, alt_name, alt_id), xbmc.LOGINFO)
+                            for try_quality in [lx_quality] + ([LX_QUALITY_FALLBACK.get(lx_quality, '')] if lx_quality in LX_QUALITY_FALLBACK else []):
+                                if not try_quality:
+                                    continue
+                                try:
+                                    alt_url = self._lxmusic_get_music_url(alt_src, alt_id, try_quality, max_retries=1)
+                                    if alt_url and self._check_url_valid(alt_url):
+                                        url = alt_url
+                                        used_source = 'source_fallback_%s_%s' % (alt_src, try_quality)
+                                        xbmc.log("plugin.audio.music: 换源成功 %s/%s/%s" % (alt_src, alt_id, try_quality), xbmc.LOGINFO)
+                                        break
+                                except Exception as ex:
+                                    xbmc.log("plugin.audio.music: 换源LXMUSIC %s/%s/%s 失败: %s" % (alt_src, alt_id, try_quality, str(ex)), xbmc.LOGWARNING)
+                            if url:
+                                break
+                        if url:
+                            break
+                except Exception as ex:
+                    import traceback
+                    xbmc.log("plugin.audio.music: 换源搜索异常: %s\n%s" % (str(ex), traceback.format_exc()), xbmc.LOGERROR)
 
             xbmc.log("plugin.audio.music: songs_url_v1 id={} url={} used_source={}".format(_id, url, used_source), xbmc.LOGDEBUG)
             result_data.append({'id': _id, 'url': url, 'level': level, 'source': used_source})
