@@ -1233,6 +1233,27 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             if artist_id:
                 xbmcgui.Window(10000).setProperty('nc_current_artist_id', str(artist_id))
                 xbmcgui.Window(10000).setProperty('nc_current_artist_name', artist_name)
+                try:
+                    cache_db = get_cache_db()
+                    _ck = cache_db.generate_cache_key('artist_info', artist_id)
+                    _cached = cache_db.get(_ck)
+                    if _cached is not None:
+                        _ai = _cached
+                    else:
+                        _ai = music.artist_info(artist_id).get('artist', {})
+                        if _ai:
+                            cache_db.set(_ck, _ai, cache_type='artist_info')
+                    xbmcgui.Window(10000).setProperty('nc_current_artist_pic', _ai.get('picUrl', '') or '')
+                    _desc = _ai.get('briefDesc', '') or ''
+                    if not _desc:
+                        _desc = _ai.get('description', '') or ''
+                    xbmcgui.Window(10000).setProperty('nc_current_artist_desc', _desc[:1020] if len(_desc) > 1020 else _desc)
+                    _ms = _ai.get('musicSize', 0)
+                    _as = _ai.get('albumSize', 0)
+                    _mv = _ai.get('mvSize', 0)
+                    xbmcgui.Window(10000).setProperty('nc_current_artist_stats', '%d首歌曲 · %d张专辑 · %d个MV' % (_ms, _as, _mv))
+                except Exception:
+                    pass
             xbmcgui.Window(10000).setProperty('nc_music_plugin_id', 'plugin.audio.music')
         except Exception as e:
             xbmc.log('[plugin.audio.music] Error adding play history: %s' % str(e), xbmc.LOGERROR)
@@ -2179,6 +2200,7 @@ def get_albums_items(albums):
         artists = [[a['name'], a['id']] for a in album['artists']]
         artists_str = '/'.join([a[0] for a in artists])
         context_menu = [
+            ('播放专辑', 'RunPlugin(%s)' % plugin.url_for('play_album', album_id=album_id)),
             ('跳转到歌手: ' + artists_str, 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(artists)))
         ]
         items.append({
@@ -2221,15 +2243,16 @@ def artist(id):
     music_size = info.get('musicSize', 0)
     album_size = info.get('albumSize', 0)
     mv_size = info.get('mvSize', 0)
+    brief_desc = info.get('briefDesc', '') or info.get('description', '')
 
     items = [
         {
-            'label': '热门50首',
+            'label': artist_name or 'Artist',
             'path': plugin.url_for('hot_songs', id=id),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
-            'info': {'plot': f'{artist_name} - 热门50首歌曲' if artist_name else '热门50首歌曲'},
+            'info': {'plot': brief_desc or (f'{artist_name} - 热门50首歌曲' if artist_name else '热门50首歌曲')},
             'info_type': 'video',
         },
         {
@@ -2283,8 +2306,8 @@ def artist(id):
     return items
 
 
-@plugin.route('/similar_artist/<id>/')
-def similar_artist(id):
+@plugin.route('/similar_artist/<id>/<offset>/')
+def similar_artist(id, offset=0):
     artists = music.similar_artist(id).get("artists", [])
     return get_artists_items(artists)
 
@@ -2722,7 +2745,8 @@ def get_artists_items(artists):
             'thumbnail': artist['picUrl'],
             'fanart': artist['picUrl'],
             'info': {'plot': plot_info},
-            'info_type': 'video'
+            'info_type': 'video',
+            'properties': {'artist_id': str(artist['id'])},
         })
     return items
 
@@ -4151,7 +4175,7 @@ def song_comments(song_id, offset='0'):
     xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
 
     offset = int(offset)
-    limit = 50  # 每页显示的评论数量
+    limit = 20  # 每页显示的评论数量
 
     try:
         # 尝试从SQLite缓存读取评论API数据
@@ -4305,7 +4329,7 @@ def song_comments(song_id, offset='0'):
 
         # 预取前5条有回复但无reply_data的评论的回复摘要
         floor_prefetched = 0
-        floor_max = 5
+        floor_max = 20
         for item in items:
             if floor_prefetched >= floor_max:
                 break
@@ -4531,6 +4555,63 @@ def show_comment_replies():
             return
 
 
+@plugin.route('/hot_song_comments/')
+def hot_song_comments():
+    """获取当前播放歌曲的热门评论"""
+    items = current_song_comments('0')
+    return [item for item in items if item.get('properties', {}).get('comment_type') == 'hot']
+
+
+@plugin.route('/latest_song_comments/<offset>/')
+def latest_song_comments(offset='0'):
+    """获取当前播放歌曲的最新评论（支持增量加载）"""
+    import json as _json
+    offset_int = int(offset)
+    items = current_song_comments(str(offset_int))
+    latest_items = [item for item in items if item.get('properties', {}).get('comment_type') != 'hot']
+    trigger_items = [item for item in items if item.get('properties', {}).get('is_comment_trigger') == '1']
+
+    comments_storage = safe_get_storage('comments')
+    if offset_int > 0:
+        cached_json = comments_storage.get('latest_cache', '')
+        if cached_json:
+            try:
+                cached_items = _json.loads(cached_json)
+                latest_items = cached_items + latest_items
+            except:
+                pass
+
+    if trigger_items:
+        next_offset = offset_int + 50
+        next_url = plugin.url_for('latest_song_comments', offset=str(next_offset))
+        latest_items = [item for item in latest_items if item.get('properties', {}).get('is_comment_trigger') != '1']
+        trigger_index = len(latest_items)
+        xbmcgui.Window(10000).setProperty('bili_comment_trigger_index', str(trigger_index))
+        try:
+            comments_storage['latest_cache'] = _json.dumps(latest_items)
+        except:
+            pass
+        latest_items.append({
+            'label': '',
+            'path': next_url,
+            'properties': {
+                'is_comment_trigger': '1',
+                'next_page': next_url,
+            },
+            'is_playable': False,
+            'thumbnail': '',
+            'icon': '',
+        })
+    else:
+        try:
+            comments_storage['latest_cache'] = _json.dumps(latest_items)
+        except:
+            pass
+
+    xbmc.log(f'[Music Comments] latest_song_comments offset={offset} returning {len(latest_items)} items', xbmc.LOGDEBUG)
+    return latest_items
+
+
 @plugin.route('/current_song_comments/<offset>/')
 def current_song_comments(offset='0'):
     """获取当前播放歌曲的评论（从URL解析ID）"""
@@ -4719,7 +4800,92 @@ def preload_cache():
     thread = threading.Thread(target=preload_cache_async, daemon=True)
     thread.start()
 
+
+@plugin.route('/set_artist_info/<artist_id>/')
+def set_artist_info(artist_id):
+    try:
+        cache_db = get_cache_db()
+        cache_key = cache_db.generate_cache_key('artist_info', artist_id)
+        cached = cache_db.get(cache_key)
+        if cached is not None:
+            info = cached
+        else:
+            info = music.artist_info(artist_id).get('artist', {})
+            if info:
+                cache_db.set(cache_key, info, cache_type='artist_info')
+        xbmcgui.Window(10000).setProperty('nc_current_artist_id', str(artist_id))
+        xbmcgui.Window(10000).setProperty('nc_current_artist_name', info.get('name', '') or '')
+        xbmcgui.Window(10000).setProperty('nc_current_artist_pic', info.get('picUrl', '') or '')
+        _desc = info.get('briefDesc', '') or ''
+        if not _desc:
+            _desc = info.get('description', '') or ''
+        xbmcgui.Window(10000).setProperty('nc_current_artist_desc', _desc[:1020] if len(_desc) > 1020 else _desc)
+        _ms = info.get('musicSize', 0)
+        _as = info.get('albumSize', 0)
+        _mv = info.get('mvSize', 0)
+        xbmcgui.Window(10000).setProperty('nc_current_artist_stats', '%d首歌曲 · %d张专辑 · %d个MV' % (_ms, _as, _mv))
+        xbmc.log('[plugin.audio.music] set_artist_info: id=%s name=%s desc_len=%d cached=%s' % (artist_id, info.get('name',''), len(_desc), 'YES' if cached else 'NO'), xbmc.LOGINFO)
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] set_artist_info error: %s' % str(e), xbmc.LOGERROR)
+
     return []
+
+
+@plugin.route('/search_and_set_artist_info/')
+def search_and_set_artist_info():
+    try:
+        artist_name = xbmcgui.Window(10000).getProperty('nc_current_artist_name')
+        if not artist_name:
+            xbmc.log('[plugin.audio.music] search_and_set_artist_info: no artist_name', xbmc.LOGINFO)
+            return []
+        cache_db = get_cache_db()
+        cache_key = cache_db.generate_cache_key('artist_search', artist_name)
+        cached = cache_db.get(cache_key)
+        if cached is not None:
+            artist_id = cached
+        else:
+            result = music.search(artist_name, stype=100, limit=5)
+            artists = result.get('result', {}).get('artists', [])
+            if not artists:
+                xbmc.log('[plugin.audio.music] search_and_set_artist_info: no results for "%s"' % artist_name, xbmc.LOGINFO)
+                return []
+            artist_id = str(artists[0].get('id', ''))
+            if artist_id:
+                cache_db.set(cache_key, artist_id, cache_type='artist_search')
+        if artist_id:
+            set_artist_info(artist_id)
+            xbmc.log('[plugin.audio.music] search_and_set_artist_info: name=%s -> id=%s' % (artist_name, artist_id), xbmc.LOGINFO)
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] search_and_set_artist_info error: %s' % str(e), xbmc.LOGERROR)
+    return []
+
+
+@plugin.route('/open_album/')
+def open_album():
+    album_path = plugin.request.args.get('path', '')
+    if album_path:
+        xbmc.executebuiltin('Dialog.Close(1150,true)')
+        xbmc.executebuiltin('ActivateWindow(10502,%s)' % album_path)
+
+
+@plugin.route('/play_album/<album_id>/')
+def play_album(album_id):
+    result = music.album(album_id)
+    songs = result.get('songs', [])
+    if not songs:
+        return
+    playlist = xbmc.PlayList(xbmc.PLAYLIST_MUSIC)
+    playlist.clear()
+    addon_id = xbmcaddon.Addon().getAddonInfo('id')
+    for song in songs:
+        song_id = song.get('id', '')
+        if song_id:
+            url = 'plugin://%s/play/song/%s/0/netease/0/netease' % (addon_id, song_id)
+            li = xbmcgui.ListItem(label=song.get('name', ''), path=url)
+            li.setProperty('IsPlayable', 'true')
+            playlist.add(url, li)
+    if playlist.size() > 0:
+        xbmc.Player().play(playlist)
 
 
 def preload_cache_async():
