@@ -4555,6 +4555,93 @@ def show_comment_replies():
             return
 
 
+@plugin.route('/comment_replies/<offset>/')
+def comment_replies(offset='0'):
+    """返回评论回复的Kodi列表项，支持增量加载（timeCursor游标分页）"""
+    import time as _time
+    offset = int(offset)
+    comment_id = xbmcgui.Window(10000).getProperty('nc_reply_comment_id')
+    song_id = xbmcgui.Window(10000).getProperty('nc_reply_song_id')
+    time_cursor = xbmcgui.Window(10000).getProperty('nc_reply_time_cursor')
+    if not comment_id or not song_id:
+        return []
+    items = []
+    limit = 20
+    cache_key = 'nc_reply_cache'
+    try:
+        if offset > 0:
+            cached_json = xbmcgui.Window(10000).getProperty(cache_key)
+            if cached_json:
+                try:
+                    items = json.loads(cached_json)
+                except Exception:
+                    items = []
+        api_params = dict(music_id=int(song_id), comment_id=int(comment_id), limit=limit)
+        if offset > 0 and time_cursor:
+            api_params['time_cursor'] = int(time_cursor)
+        resp = music.comment_floor(**api_params)
+        xbmc.log('[Music Comments] comment_replies API request: song_id=%s, comment_id=%s, offset=%d, time_cursor=%s' % (song_id, comment_id, offset, time_cursor), xbmc.LOGINFO)
+        if resp.get('code') != 200:
+            xbmc.log('[Music Comments] comment_replies API error: %s' % str(resp.get('code')), xbmc.LOGWARNING)
+            return items if items else []
+        batch = resp.get('data', {}).get('comments', []) if isinstance(resp.get('data'), dict) else resp.get('comments', [])
+        if not batch and isinstance(resp.get('data'), list):
+            batch = resp['data']
+        if not batch:
+            for k in resp:
+                v = resp[k]
+                if isinstance(v, list) and len(v) > 0 and isinstance(v[0], dict) and 'content' in v[0]:
+                    batch = v
+                    break
+        total = resp.get('data', {}).get('totalCount', 0) if isinstance(resp.get('data'), dict) else 0
+        has_more = resp.get('data', {}).get('hasMore', False) if isinstance(resp.get('data'), dict) else False
+        xbmc.log('[Music Comments] comment_replies API response: batch_size=%d, total=%d, hasMore=%s, first_nick=%s, first_time=%s, last_time=%s' % (len(batch), total, has_more, batch[0].get('user',{}).get('nickname','') if batch else 'N/A', str(batch[0].get('time','')) if batch else 'N/A', str(batch[-1].get('time','')) if batch else 'N/A'), xbmc.LOGINFO)
+        xbmcgui.Window(10000).setProperty('nc_reply_total', str(total))
+        for i, fc in enumerate(batch):
+            nick = fc.get('user', {}).get('nickname', '')
+            avatar = fc.get('user', {}).get('avatarUrl', '')
+            content = fc.get('content', '')
+            liked = fc.get('likedCount', 0)
+            floor = offset + i + 1
+            t = fc.get('time', 0)
+            time_str = _time.strftime('%Y-%m-%d %H:%M', _time.localtime(t / 1000)) if t else ''
+            item = {
+                'label': nick,
+                'icon': avatar,
+                'properties': {
+                    'reply_content': content,
+                    'reply_liked': str(liked),
+                    'reply_floor': str(floor),
+                    'reply_time': time_str,
+                    'is_trigger': '0',
+                }
+            }
+            items.append(item)
+        if batch:
+            last_time = batch[-1].get('time', 0)
+            xbmcgui.Window(10000).setProperty('nc_reply_time_cursor', str(last_time))
+        try:
+            xbmcgui.Window(10000).setProperty(cache_key, json.dumps(items))
+        except Exception:
+            pass
+        if has_more:
+            next_url = plugin.url_for('comment_replies', offset=str(offset + limit))
+            trigger_index = len(items)
+            xbmcgui.Window(10000).setProperty('nc_reply_trigger_index', str(trigger_index))
+            items.append({
+                'label': '',
+                'properties': {
+                    'next_page': next_url,
+                    'reply_content': '',
+                    'is_trigger': '1',
+                }
+            })
+        xbmc.log('[Music Comments] comment_replies: offset=%d, got=%d, total=%d, items=%d, hasMore=%s' % (offset, len(batch), total, len(items), has_more), xbmc.LOGINFO)
+    except Exception as e:
+        xbmc.log('[Music Comments] comment_replies error: %s' % str(e), xbmc.LOGERROR)
+    return items
+
+
 @plugin.route('/hot_song_comments/')
 def hot_song_comments():
     """获取当前播放歌曲的热门评论"""

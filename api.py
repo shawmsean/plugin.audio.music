@@ -555,10 +555,14 @@ class NetEase(object):
         params = dict(rid=music_id, offset=offset, total=total, limit=limit)
         return self.request("POST", path, params)
 
-    def comment_floor(self, music_id, comment_id, offset=0, limit=20):
+    def comment_floor(self, music_id, comment_id, offset=0, limit=20, time_cursor=None):
         path = "/weapi/resource/comment/floor/get"
         thread_id = 'R_SO_4_{}'.format(music_id)
-        params = dict(parentCommentId=comment_id, threadId=thread_id, time=-1, limit=limit, offset=offset)
+        params = dict(parentCommentId=comment_id, threadId=thread_id, limit=limit)
+        if time_cursor is not None:
+            params['time'] = time_cursor
+        else:
+            params['time'] = -1
         return self.request("POST", path, params)
 
     # song ids --> song urls ( details )
@@ -1096,54 +1100,28 @@ class NetEase(object):
         params = dict(id=id)
         return self.request("POST", path, params)
 
-    # 打卡（上传播放记录）
     def daka(self, id, sourceId=0, time=240):
         """
-        上传歌曲播放记录到网易云
+        上传歌曲播放记录到网易云（听歌打卡）
 
-        端点: /weapi/feedback/weblog (weapi 加密)
-        参考: NeteaseCloudMusicApiEnhanced/module/scrobble.js
-
-        注意: 此端点仅影响"听歌排行"(/api/v1/play/record)，
-        不会写入"最近播放"列表(/api/play-record/song/list)。
-        "最近播放"由官方客户端本地同步，第三方API无法写入。
+        使用 apis.netstart.cn 公开API，无需加密
 
         Args:
             id: 歌曲ID
-            sourceId: 来源ID
+            sourceId: 来源ID（歌单或专辑ID）
             time: 播放时长（秒）
         """
-        logs_payload = [{
-            'action': 'play',
-            'json': {
-                "download": 0,
-                "end": 'playend',
-                "id": id,
-                "sourceId": sourceId,
-                "time": time,
-                "type": 'song',
-                "wifi": 0,
-                "source": 'list',
-                "mainsite": 1,
-                "content": ''
-            }
-        }]
-        params = {'logs': json.dumps(logs_payload, ensure_ascii=False)}
-
-        # 使用 weapi 加密 (与 NeteaseCloudMusicApiEnhanced 一致)
         try:
-            weapi_path = "/weapi/feedback/weblog"
-            result = self.request("POST", weapi_path, params.copy())
+            url = f'https://apis.netstart.cn/music/scrobble?id={id}&sourceid={sourceId}&time={time}'
+            result = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}, timeout=5).json()
             if result.get('code') == 200:
-                xbmc.log(f'[Daka] 播放记录上传成功: song_id={id}, time={time}s', xbmc.LOGINFO)
+                xbmc.log(f'[Daka] 打卡成功: song_id={id}, sourceid={sourceId}, time={time}s', xbmc.LOGINFO)
                 return result
             else:
-                xbmc.log(f'[Daka] 播放记录上传失败: code={result.get("code")}', xbmc.LOGWARNING)
+                xbmc.log(f'[Daka] 打卡失败: code={result.get("code")}', xbmc.LOGWARNING)
         except Exception as e:
-            xbmc.log(f'[Daka] weapi 异常: {str(e)}', xbmc.LOGERROR)
-
-        xbmc.log(f'[Daka] 播放记录上传失败: song_id={id}', xbmc.LOGWARNING)
-        return {"code": -1, "msg": "播放记录上传失败"}
+            xbmc.log(f'[Daka] 打卡异常: {str(e)}', xbmc.LOGERROR)
+        return {"code": -1, "msg": "打卡失败"}
 
     # 云盘歌曲
     def cloud_songlist(self, offset=0, limit=50):
