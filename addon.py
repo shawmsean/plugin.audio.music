@@ -1,6 +1,9 @@
 # -*- coding:utf-8 -*-
 from api import NetEase
-from xbmcswift2 import Plugin, xbmcgui, xbmcplugin, xbmc, xbmcaddon # type: ignore
+import xbmcplugin
+import xbmcaddon
+import xbmcgui
+import xbmc
 import sqlite3
 import re
 import sys
@@ -11,7 +14,9 @@ import xbmcvfs # type: ignore
 import qrcode # type: ignore
 from datetime import datetime
 import json
-from cache import get_cache_db, get_play_history, add_play_history, clear_play_history, get_play_history_by_artist, get_play_history_by_album  # 导入缓存模块和历史记录函数
+from cache import get_cache_db, get_play_history, add_play_history, clear_play_history, get_play_history_by_artist, get_play_history_by_album
+from urllib.parse import parse_qs, urlencode, unquote_plus
+
 try:
     xbmc.translatePath = xbmcvfs.translatePath
 except AttributeError:
@@ -22,20 +27,98 @@ if not PY3:
     reload(sys) # type: ignore
     sys.setdefaultencoding('utf-8')
 
-plugin = Plugin()
-def safe_get_storage(name, **kwargs):
-    """Attempt to get persistent storage, fall back to an in-memory dict on error.
+ADDON_ID = 'plugin.audio.music'
+ADDON = xbmcaddon.Addon()
 
-    This prevents PermissionError or other IO errors from crashing the addon.
-    """
+def url_for(path, **kwargs):
+    url = 'plugin://%s%s' % (ADDON_ID, path)
+    if kwargs:
+        url += '?' + urlencode(kwargs)
+    return url
+
+
+
+def _url_for(func_name, **kwargs):
+    """Compatibility wrapper that mimics xbmcswift2's plugin.url_for behavior."""
+    if func_name not in _ROUTE_PATHS:
+        return url_for('/unknown/', **kwargs)
+    path_template = _ROUTE_PATHS[func_name]
+    path_params_list = _ROUTE_PATH_PARAMS[func_name]
+    path = path_template
+    query_kwargs = {}
+    for k, v in kwargs.items():
+        if k in path_params_list:
+            path = path.replace('<%s>' % k, str(v))
+        else:
+            query_kwargs[k] = v
+    return url_for(path, **query_kwargs)
+
+_ROUTE_PATHS = {'delete_thumbnails': '/delete_thumbnails/', 'login': '/login/', 'logout': '/logout/', 'login_sms': '/login_sms/', 'to_artist': '/to_artist/<artists>/', 'song_contextmenu': '/song_contextmenu/<action>/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/', 'play': '/play/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/<source>/', 'playlist_position': '/playlist_position/', 'playlist_focus_current': '/playlist_focus_current/', 'play_playlist_offset': '/play_playlist_offset/', 'history_by_album': '/history_by_album/', 'history': '/history/', 'history_filter': '/history_filter/<filter>/', 'index': '/', 'history_clear': '/history_clear/', 'history_play_all': '/history_play_all/', 'history_by_artist': '/history_by_artist/', 'history_group_artist': '/history_group_artist/<artist>/', 'history_group_album': '/history_group_album/<album>/', 'vip_timemachine': '/vip_timemachine/', 'vip_timemachine_week': '/vip_timemachine_week/<index>/', 'qrcode_login': '/qrcode_login/', 'mlog_category': '/mlog_category/', 'mlog': '/mlog/<cid>/<pagenum>/', 'top_mvs': '/top_mvs/<offset>/', 'new_songs': '/new_songs/', 'new_albums': '/new_albums/<offset>/', 'toplists': '/toplists/', 'top_artists': '/top_artists/', 'recommend_songs': '/recommend_songs/', 'play_recommend_songs': '/play_recommend_songs/<song_id>/<mv_id>/<dt>/', 'play_playlist_songs': '/play_playlist_songs/<playlist_id>/<song_id>/<mv_id>/<dt>/', 'history_recommend_songs': '/history_recommend_songs/<date>/', 'albums': '/albums/<artist_id>/<offset>/', 'album': '/album/<id>/', 'artist': '/artist/<id>/', 'similar_artist': '/similar_artist/<id>/<offset>/', 'artist_mvs': '/artist_mvs/<id>/<offset>/', 'hot_songs': '/hot_songs/<id>/', 'artist_songs': '/artist_songs/<id>/<offset>/', 'sublist': '/sublist/', 'song_purchased': '/song_purchased/<offset>/', 'dj_sublist': '/dj_sublist/<offset>/', 'djlist': '/djlist/<id>/<offset>/', 'digitalAlbum_purchased': '/digitalAlbum_purchased/', 'playlist_contextmenu': '/playlist_contextmenu/<action>/<id>/', 'video_sublist': '/video_sublist/', 'album_sublist': '/album_sublist/', 'follow_user': '/follow_user/<type>/<id>/', 'user': '/user/<id>/', 'history_recommend_dates': '/history_recommend_dates/', 'play_record': '/play_record/<uid>/', 'show_play_record': '/show_play_record/<uid>/<type>/', 'user_getfolloweds': '/user_getfolloweds/<uid>/<offset>/', 'user_getfollows': '/user_getfollows/<uid>/<offset>/', 'artist_sublist': '/artist_sublist/', 'search': '/search/', 'sea': '/sea/<type>/', 'personal_fm': '/personal_fm/', 'tunehub_search': '/tunehub_search/', 'tunehub_search_platform': '/tunehub_search_platform/<source>/', 'tunehub_aggregate_search': '/tunehub_aggregate_search/', 'tunehub_playlist': '/tunehub_playlist/', 'tunehub_playlist_platform': '/tunehub_playlist_platform/<source>/', 'tunehub_toplists': '/tunehub_toplists/', 'tunehub_toplists_platform': '/tunehub_toplists_platform/<source>/', 'favorite_toggle': '/favorite_toggle/<source>/<id>/<name>/<artist>/', 'favorites': '/favorites/', 'tunehub_toplist': '/tunehub_toplist/<source>/<id>/', 'tunehub_play': '/tunehub_play/<source>/<id>/<br>/', 'recommend_playlists': '/recommend_playlists/', 'playlist_tags': '/playlist_tags/', 'hot_playlists_by_tag': '/hot_playlists_by_tag/<category>/<offset>/', 'hot_playlists': '/hot_playlists/<offset>/', 'user_playlists': '/user_playlists/<uid>/', 'playlist': '/playlist/<ptype>/<id>/', 'cloud': '/cloud/<offset>/', 'song_comments': '/song_comments/<song_id>/<offset>/', 'load_more_comments': '/load_more_comments/<offset>/', 'trigger_comment_load': '/trigger_comment_load/', 'show_comment_replies': '/show_comment_replies/', 'comment_replies': '/comment_replies/<offset>/', 'hot_song_comments': '/hot_song_comments/', 'latest_song_comments': '/latest_song_comments/<offset>/', 'current_song_comments': '/current_song_comments/<offset>/', 'debug_song_info': '/debug_song_info/', 'clear_cache': '/clear_cache/', 'clear_expired_cache': '/clear_expired_cache/', 'preload_cache': '/preload_cache/', 'set_artist_info': '/set_artist_info/<artist_id>/', 'search_and_set_artist_info': '/search_and_set_artist_info/', 'open_album': '/open_album/', 'play_album': '/play_album/<album_id>/'}
+
+_ROUTE_PATH_PARAMS = {'delete_thumbnails': [], 'login': [], 'logout': [], 'login_sms': [], 'to_artist': ['artists'], 'song_contextmenu': ['action', 'meida_type', 'song_id', 'mv_id', 'sourceId', 'dt'], 'play': ['meida_type', 'song_id', 'mv_id', 'sourceId', 'dt', 'source'], 'playlist_position': [], 'playlist_focus_current': [], 'play_playlist_offset': [], 'history_by_album': [], 'history': [], 'history_filter': ['filter'], 'index': [], 'history_clear': [], 'history_play_all': [], 'history_by_artist': [], 'history_group_artist': ['artist'], 'history_group_album': ['album'], 'vip_timemachine': [], 'vip_timemachine_week': ['index'], 'qrcode_login': [], 'mlog_category': [], 'mlog': ['cid', 'pagenum'], 'top_mvs': ['offset'], 'new_songs': [], 'new_albums': ['offset'], 'toplists': [], 'top_artists': [], 'recommend_songs': [], 'play_recommend_songs': ['song_id', 'mv_id', 'dt'], 'play_playlist_songs': ['playlist_id', 'song_id', 'mv_id', 'dt'], 'history_recommend_songs': ['date'], 'albums': ['artist_id', 'offset'], 'album': ['id'], 'artist': ['id'], 'similar_artist': ['id', 'offset'], 'artist_mvs': ['id', 'offset'], 'hot_songs': ['id'], 'artist_songs': ['id', 'offset'], 'sublist': [], 'song_purchased': ['offset'], 'dj_sublist': ['offset'], 'djlist': ['id', 'offset'], 'digitalAlbum_purchased': [], 'playlist_contextmenu': ['action', 'id'], 'video_sublist': [], 'album_sublist': [], 'follow_user': ['type', 'id'], 'user': ['id'], 'history_recommend_dates': [], 'play_record': ['uid'], 'show_play_record': ['uid', 'type'], 'user_getfolloweds': ['uid', 'offset'], 'user_getfollows': ['uid', 'offset'], 'artist_sublist': [], 'search': [], 'sea': ['type'], 'personal_fm': [], 'tunehub_search': [], 'tunehub_search_platform': ['source'], 'tunehub_aggregate_search': [], 'tunehub_playlist': [], 'tunehub_playlist_platform': ['source'], 'tunehub_toplists': [], 'tunehub_toplists_platform': ['source'], 'favorite_toggle': ['source', 'id', 'name', 'artist'], 'favorites': [], 'tunehub_toplist': ['source', 'id'], 'tunehub_play': ['source', 'id', 'br'], 'recommend_playlists': [], 'playlist_tags': [], 'hot_playlists_by_tag': ['category', 'offset'], 'hot_playlists': ['offset'], 'user_playlists': ['uid'], 'playlist': ['ptype', 'id'], 'cloud': ['offset'], 'song_comments': ['song_id', 'offset'], 'load_more_comments': ['offset'], 'trigger_comment_load': [], 'show_comment_replies': [], 'comment_replies': ['offset'], 'hot_song_comments': [], 'latest_song_comments': ['offset'], 'current_song_comments': ['offset'], 'debug_song_info': [], 'clear_cache': [], 'clear_expired_cache': [], 'preload_cache': [], 'set_artist_info': ['artist_id'], 'search_and_set_artist_info': [], 'open_album': [], 'play_album': ['album_id']}
+
+
+
+def add_directory_items(handle, items):
+    """Convert xbmcswift2-style items list to xbmcplugin.addDirectoryItems format."""
+    kodi_items = []
+    for item in items:
+        path = item.get('path', '')
+        label = item.get('label', '')
+        is_playable = item.get('is_playable', False)
+        li = xbmcgui.ListItem(label=label, offscreen=True)
+        icon = item.get('icon', '')
+        thumb = item.get('thumbnail', '')
+        fanart = item.get('fanart', '')
+        art = {}
+        if icon: art['icon'] = icon
+        if thumb: art['thumb'] = thumb
+        if fanart: art['fanart'] = fanart
+        if art: li.setArt(art)
+        info = item.get('info', {})
+        info_type = item.get('info_type', 'video')
+        if info:
+            li.setInfo(info_type, info)
+        props = item.get('properties', {})
+        if props:
+            for pk, pv in props.items():
+                li.setProperty(str(pk), str(pv))
+        if is_playable:
+            li.setProperty('IsPlayable', 'true')
+        context_menu = item.get('context_menu', [])
+        if context_menu:
+            li.addContextMenuItems(context_menu)
+        is_folder = not is_playable
+        kodi_items.append((path, li, is_folder))
+    if kodi_items:
+        xbmcplugin.addDirectoryItems(handle, kodi_items, len(kodi_items))
+
+def _storage_key(name):
+    return 'nc_storage_%s' % name
+
+def safe_get_storage(name, **kwargs):
     try:
-        return plugin.get_storage(name, **kwargs)
+        win = xbmcgui.Window(10000)
+        key = _storage_key(name)
+        raw = win.getProperty(key)
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception:
+                pass
+        defaults = {
+            'liked_songs': {'pid': 0, 'ids': []},
+            'account': {'uid': '', 'logined': True, 'first_run': True},
+            'time_machine': {'weeks': []},
+        }
+        d = defaults.get(name, {})
+        win.setProperty(key, json.dumps(d))
+        return d
     except Exception as e:
         try:
             xbmc.log('plugin.audio.music163: get_storage(%s) failed: %s' % (name, str(e)), xbmc.LOGERROR)
         except Exception:
             pass
-        # Return a dict with default structure for the specific storage type
         if name == 'liked_songs':
             return {'pid': 0, 'ids': []}
         elif name == 'account':
@@ -43,8 +126,15 @@ def safe_get_storage(name, **kwargs):
         elif name == 'time_machine':
             return {'weeks': []}
         else:
-            # Return a plain dict as a non-persistent fallback for other storage types
             return {}
+
+def _save_storage(name, data):
+    try:
+        win = xbmcgui.Window(10000)
+        key = _storage_key(name)
+        win.setProperty(key, json.dumps(data))
+    except Exception:
+        pass
 
 
 account = safe_get_storage('account')
@@ -87,7 +177,6 @@ def caculate_size(path):
     return count, size
 
 
-@plugin.route('/delete_thumbnails/')
 def delete_thumbnails():
     path = xbmc.translatePath('special://thumbnails')
     count, size = caculate_size(path)
@@ -273,7 +362,6 @@ def build_music_listitem(song_info, media_type='song'):
 
     return listitem
 
-@plugin.route('/login/')
 def login():
     keyboard = xbmc.Keyboard('', '请输入手机号或邮箱')
     keyboard.doModal()
@@ -298,6 +386,7 @@ def login():
     if login['code'] == 200:
         account['logined'] = True
         account['uid'] = login['profile']['userId']
+        _save_storage('account', account)
         dialog = xbmcgui.Dialog()
         dialog.notification('登录成功', '请重启软件以解锁更多功能',
                             xbmcgui.NOTIFICATION_INFO, 800, False)
@@ -315,13 +404,14 @@ def login():
                             xbmcgui.NOTIFICATION_INFO, 800, False)
 
 
-@plugin.route('/logout/')
 def logout():
     account['logined'] = True
     account['uid'] = ''
+    _save_storage('account', account)
     liked_songs = safe_get_storage('liked_songs')
     liked_songs['pid'] = 0
     liked_songs['ids'] = []
+    _save_storage('liked_songs', liked_songs)
     COOKIE_PATH = os.path.join(PROFILE, 'cookie.txt')
     with open(COOKIE_PATH, 'w') as f:
         f.write('# Netscape HTTP Cookie File\n')
@@ -331,7 +421,6 @@ def logout():
 
 
 # 短信验证码登录
-@plugin.route('/login_sms/')
 def login_sms():
     """短信验证码登录"""
     dialog = xbmcgui.Dialog()
@@ -381,6 +470,7 @@ def login_sms():
         if user_info.get('code') == 200:
             account['logined'] = True
             account['uid'] = user_info['data']['userId']
+            _save_storage('account', account)
             dialog.notification('登录成功', '请重启软件以解锁更多功能',
                                 xbmcgui.NOTIFICATION_INFO, 800, False)
         else:
@@ -392,14 +482,14 @@ def login_sms():
                             xbmcgui.NOTIFICATION_INFO, 800, False)
 
 
-#limit = int(xbmcplugin.getSetting(int(sys.argv[1]),'number_of_songs_per_page'))
-limit = xbmcplugin.getSetting(int(sys.argv[1]), 'number_of_songs_per_page')
+#limit = int(ADDON.getSetting('number_of_songs_per_page'))
+limit = ADDON.getSetting('number_of_songs_per_page')
 if limit == '':
     limit = 100
 else:
     limit = int(limit)
 
-quality = xbmcplugin.getSetting(int(sys.argv[1]), 'quality')
+quality = ADDON.getSetting('quality')
 if quality == '0':
     level = 'standard'
 elif quality == '1':
@@ -421,7 +511,7 @@ elif quality == '8':
 else:
     level = 'standard'
 
-resolution = xbmcplugin.getSetting(int(sys.argv[1]), 'resolution')
+resolution = ADDON.getSetting('resolution')
 if resolution == '0':
     r = 240
 elif resolution == '1':
@@ -646,7 +736,7 @@ def get_songs(songs, privileges=[], picUrl=None, source=''):
 
                     data['second_line'] += line
         else:
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'show_album_name') == 'true':
+            if ADDON.getSetting('show_album_name') == 'true':
                 data['second_line'] = data['album_name']
         datas.append(data)
     return datas
@@ -660,7 +750,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
     # if source == 'playlist':
     #     items.append({
     #         'label': '▶ 播放全部',
-    #         'path': plugin.url_for(
+    #         'path': _url_for(
     #             'play_playlist_songs',
     #             playlist_id=str(sourceId),
     #             song_id='0',          # 这里先传 0，表示从第一首开始
@@ -678,7 +768,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
     # if source == 'recommend_songs' and widget == '0':
     #     items.append({
     #         'label': '▶ 播放整个推荐列表',
-    #         'path': plugin.url_for(
+    #         'path': _url_for(
     #             'play_recommend_songs',
     #             song_id='0',
     #             mv_id='0',
@@ -693,11 +783,11 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
     for play in songs:
         # 隐藏不能播放的歌曲（安全检查 privilege 是否为 None）
         priv = play.get('privilege') or {}
-        if priv.get('pl', None) == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'hide_songs') == 'true':
+        if priv.get('pl', None) == 0 and ADDON.getSetting('hide_songs') == 'true':
             continue
 
         # 显示序号
-        if xbmcplugin.getSetting(int(sys.argv[1]), 'show_index') == 'true' and enable_index:
+        if ADDON.getSetting('show_index') == 'true' and enable_index:
             offset += 1
             if offset < 10:
                 str_offset = '0' + str(offset) + '.'
@@ -709,7 +799,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
         ar_name = play['artist']
         mv_id = play['mv_id']
 
-        song_naming_format = xbmcplugin.getSetting(int(sys.argv[1]), 'song_naming_format')
+        song_naming_format = ADDON.getSetting('song_naming_format')
         if song_naming_format == '0':
             label = str_offset + ar_name + ' - ' + play['name']
         elif song_naming_format == '1':
@@ -725,7 +815,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
         if st is not None and st < 0:
             label = tag(label, 'grey')
         liked_songs = safe_get_storage('liked_songs')
-        if play['id'] in liked_songs['ids'] and xbmcplugin.getSetting(int(sys.argv[1]), 'like_tag') == 'true':
+        if play['id'] in liked_songs['ids'] and ADDON.getSetting('like_tag') == 'true':
             label = tag('♥ ') + label
 
         # 各种标签逻辑（原样保留）
@@ -734,14 +824,14 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             if st2 is not None and st2 < 0:
                 label = tag(label, 'grey')
             fee = priv.get('fee')
-            if fee == 1 and xbmcplugin.getSetting(int(sys.argv[1]), 'vip_tag') == 'true':
+            if fee == 1 and ADDON.getSetting('vip_tag') == 'true':
                 label += tag(' vip')
-            if priv.get('cs') and xbmcplugin.getSetting(int(sys.argv[1]), 'cloud_tag') == 'true':
+            if priv.get('cs') and ADDON.getSetting('cloud_tag') == 'true':
                 label += ' ☁'
             flag = priv.get('flag', 0)
-            if (flag & 64) > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'exclusive_tag') == 'true':
+            if (flag & 64) > 0 and ADDON.getSetting('exclusive_tag') == 'true':
                 label += tag(' 独家')
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'sq_tag') == 'true':
+            if ADDON.getSetting('sq_tag') == 'true':
                 play_max = priv.get('playMaxBrLevel')
                 if play_max:
                     if play_max == 'hires':
@@ -758,11 +848,11 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                         label += tag(' 杜比全景声')
                 elif priv.get('maxbr', 0) >= 999000:
                     label += tag(' SQ')
-            if priv.get('preSell') == True and xbmcplugin.getSetting(int(sys.argv[1]), 'presell_tag') == 'true':
+            if priv.get('preSell') == True and ADDON.getSetting('presell_tag') == 'true':
                 label += tag(' 预售')
-            elif fee == 4 and priv.get('pl') == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'pay_tag') == 'true':
+            elif fee == 4 and priv.get('pl') == 0 and ADDON.getSetting('pay_tag') == 'true':
                 label += tag(' 付费')
-        if mv_id > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'mv_tag') == 'true':
+        if mv_id > 0 and ADDON.getSetting('mv_tag') == 'true':
             label += tag(' MV', 'green')
 
         if 'second_line' in play and play['second_line']:
@@ -770,25 +860,25 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
 
         context_menu = []
         if play['artists']:
-            context_menu.append(('跳转到歌手: ' + play['artist'], 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(play['artists']))))
+            context_menu.append(('跳转到歌手: ' + play['artist'], 'RunPlugin(%s)' % _url_for('to_artist', artists=json.dumps(play['artists']))))
         if play['album_name'] and play['album_id']:
-            context_menu.append(('跳转到专辑: ' + play['album_name'], 'Container.Update(%s)' % plugin.url_for('album', id=play['album_id'])))
+            context_menu.append(('跳转到专辑: ' + play['album_name'], 'Container.Update(%s)' % _url_for('album', id=play['album_id'])))
 
-        if mv_id > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'mvfirst') == 'true' and getmv:
+        if mv_id > 0 and ADDON.getSetting('mvfirst') == 'true' and getmv:
             # MV 优先的情况（原样保留）
             context_menu.extend([
-                ('播放歌曲', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='play_song', meida_type='song',
+                ('播放歌曲', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='play_song', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
-                ('查看评论', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='view_comments', meida_type='song',
+                ('查看评论', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='view_comments', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
-                ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
+                ('收藏到歌单', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='sub_playlist', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
-                ('收藏到视频歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_video_playlist', meida_type='song',
+                ('收藏到视频歌单', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='sub_video_playlist', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
             ])
             items.append({
                 'label': label,
-                'path': plugin.url_for('play', meida_type='mv', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000), source='netease'),
+                'path': _url_for('play', meida_type='mv', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000), source='netease'),
                 'is_playable': True,
                 'icon': play.get('picUrl', None),
                 'thumbnail': play.get('picUrl', None),
@@ -803,24 +893,24 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
             })
         else:
             context_menu.extend([
-                ('查看评论', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='view_comments', meida_type='song',
+                ('查看评论', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='view_comments', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
-                ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
+                ('收藏到歌单', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='sub_playlist', meida_type='song',
                  song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))),
                 ('歌曲ID:' + str(play['id']), ''),
             ])
 
             if mv_id > 0:
-                context_menu.append(('收藏到视频歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_video_playlist',
+                context_menu.append(('收藏到视频歌单', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='sub_video_playlist',
                                     meida_type='song', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))))
-                context_menu.append(('播放MV', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='play_mv', meida_type='song', song_id=str(
+                context_menu.append(('播放MV', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='play_mv', meida_type='song', song_id=str(
                     play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000))))
 
             # 歌曲不能播放时播放MV（原样保留）
-            if priv and priv.get('st') is not None and priv.get('st') < 0 and mv_id > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'auto_play_mv') == 'true':
+            if priv and priv.get('st') is not None and priv.get('st') < 0 and mv_id > 0 and ADDON.getSetting('auto_play_mv') == 'true':
                 items.append({
                     'label': label,
-                    'path': plugin.url_for('play', meida_type='song', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000), source='netease'),
+                    'path': _url_for('play', meida_type='song', song_id=str(play['id']), mv_id=str(mv_id), sourceId=str(sourceId), dt=str(play['dt']//1000), source='netease'),
                     'is_playable': True,
                     'icon': play.get('picUrl', None),
                     'thumbnail': play.get('picUrl', None),
@@ -861,7 +951,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                 if source == 'recommend_songs':
                     if widget == '1':
                         # ⭐ 小部件点击（widget == '1'） → 播放整个推荐列表
-                        base_item['path'] = plugin.url_for(
+                        base_item['path'] = _url_for(
                             'play_recommend_songs',
                             song_id=str(play['id']),
                             mv_id=str(mv_id),
@@ -869,7 +959,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                         )
                     else:
                         # ⭐ 推荐页面点击（widget == '0'） → 播单曲
-                        base_item['path'] = plugin.url_for(
+                        base_item['path'] = _url_for(
                             'play',
                             meida_type='song',
                             song_id=str(play['id']),
@@ -882,7 +972,7 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                 
                 elif source == 'playlist'and offset == 0:
                     # ⭐ 歌单里的单曲：直接指向 play 路由，不再指向 play_playlist_songs
-                    base_item['path'] = plugin.url_for(
+                    base_item['path'] = _url_for(
                         'play',
                         meida_type='song',
                         song_id=str(play['id']),
@@ -895,10 +985,10 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
                     # Check if TuneHub song
                     if 'source' in play and play['source'] != 'netease':
                         xbmc.log('plugin.audio.music: TuneHub song detected - source: %s, id: %s' % (play['source'], str(play['id'])), xbmc.LOGDEBUG)
-                        base_item['path'] = plugin.url_for('tunehub_play', source=play['source'], id=str(play['id']), br='320k')
+                        base_item['path'] = _url_for('tunehub_play', source=play['source'], id=str(play['id']), br='320k')
                     else:
                         xbmc.log('plugin.audio.music: NetEase song or no source - id: %s, source: %s' % (str(play['id']), play.get('source', 'none')), xbmc.LOGDEBUG)
-                        base_item['path'] = plugin.url_for(
+                        base_item['path'] = _url_for(
                             'play',
                             meida_type='song',                     # 注意：这里用的是 meida_type，和路由保持一致
                             song_id=str(play['id']),
@@ -910,11 +1000,10 @@ def get_songs_items(datas, privileges=[], picUrl=None, offset=0, getmv=True, sou
 
 
                 items.append(base_item)
-    # plugin.log.info(f"items = {items}")
+    # xbmc.log(f'items = {items}', xbmc.LOGINFO)
     return items
 
 
-@plugin.route('/to_artist/<artists>/')
 def to_artist(artists):
     artists = json.loads(artists)
 
@@ -925,10 +1014,10 @@ def to_artist(artists):
 
     # 只有一个歌手
     if len(artists) == 1:
-        plugin.log.info(f"artists = {artists}")
+        xbmc.log(f'artists = {artists}', xbmc.LOGINFO)
         artist_id = safe_id(artists[0])
         xbmc.executebuiltin(
-            'Container.Update(%s)' % plugin.url_for('artist', id=artist_id)
+            'Container.Update(%s)' % _url_for('artist', id=artist_id)
         )
         return
 
@@ -939,11 +1028,10 @@ def to_artist(artists):
 
     artist_id = safe_id(artists[sel])
     xbmc.executebuiltin(
-        'Container.Update(%s)' % plugin.url_for('artist', id=artist_id)
+        'Container.Update(%s)' % _url_for('artist', id=artist_id)
     )
 
 
-@plugin.route('/song_contextmenu/<action>/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/')
 def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
     if action == 'sub_playlist':
         # 检查用户是否已登录
@@ -990,6 +1078,7 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
                 liked_songs = safe_get_storage('liked_songs')
                 if liked_songs['pid'] == playlist_id:
                     liked_songs['ids'].append(int(song_id))
+                _save_storage('liked_songs', liked_songs)
                 xbmc.executebuiltin('Container.Refresh')
             elif 'message' in result and result['message'] is not None:
                 msg = str(result['code'])+'错误:'+result['message']
@@ -1035,6 +1124,7 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
         # 保存歌曲ID到存储
         comments_storage = safe_get_storage('comments')
         comments_storage['current_song_id'] = song_id
+        _save_storage('comments', comments_storage)
         xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
         
         # 设置评论内容URL到Window Property，供1142的content动态读取
@@ -1064,7 +1154,6 @@ def song_contextmenu(action, meida_type, song_id, mv_id, sourceId, dt):
             xbmc.executebuiltin('PlayMedia(%s)' % url)
 
 
-@plugin.route('/play/<meida_type>/<song_id>/<mv_id>/<sourceId>/<dt>/<source>/')
 def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
     if meida_type == 'mv':
         mv = music.mv_url(mv_id, r).get("data", {})
@@ -1099,7 +1188,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
         else:
             url = urls[0]
         if url is None:
-            if int(mv_id) > 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'auto_play_mv') == 'true':
+            if int(mv_id) > 0 and ADDON.getSetting('auto_play_mv') == 'true':
                 mv = music.mv_url(mv_id, r).get("data", {})
                 url = mv['url']
                 if url is not None:
@@ -1112,7 +1201,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
             dialog.notification(
                 '播放失败', msg, xbmcgui.NOTIFICATION_INFO, 800, False)
         else:
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
+            if ADDON.getSetting('upload_play_record') == 'true':
                 try:
                     result = music.daka(song_id, sourceId=sourceId, time=dt)
                     if result.get('code') == 200:
@@ -1281,7 +1370,7 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
         try:
             if url is not None:
                 try:
-                    plugin.set_resolved_url(url)
+                    xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, xbmcgui.ListItem(path=url))
                 except Exception:
                     # 不应阻止后续的 xbmcplugin.setResolvedUrl
                     pass
@@ -1314,11 +1403,10 @@ def play(meida_type, song_id, mv_id, sourceId, dt, source='netease'):
     except Exception:
         # 回退到原有方式（兼容未知 xbmcswift2 版本）
         try:
-            plugin.set_resolved_url(url)
+            xbmcplugin.setResolvedUrl(int(sys.argv[1]), True, xbmcgui.ListItem(path=url))
         except Exception:
             pass
 
-@plugin.route('/playlist_position/')
 def playlist_position():
     """供皮肤端实时获取当前播放位置(0-based)，设置到Window Property。
     皮肤端在打开OSD播放列表时通过RunPlugin调用此路由。"""
@@ -1335,7 +1423,6 @@ def playlist_position():
         xbmc.log('[plugin.audio.music] Error getting playlist position: %s' % str(e), xbmc.LOGERROR)
 
 
-@plugin.route('/playlist_focus_current/')
 def playlist_focus_current():
     """延迟1秒后获取播放位置并执行SetFocus，供1140 onload调用。
     延迟确保playlistmusic://列表加载完成且property已更新。"""
@@ -1358,7 +1445,6 @@ def playlist_focus_current():
     t.start()
 
 
-@plugin.route('/play_playlist_offset/')
 def play_playlist_offset():
     offset = xbmcgui.Window(10000).getProperty('nc_play_offset')
     if offset:
@@ -1375,7 +1461,6 @@ def play_playlist_offset():
         xbmc.log('[plugin.audio.music] play_playlist_offset: invalid offset=%d, playlist size=%d' % (offset, playlist.size()), xbmc.LOGWARNING)
 
 
-@plugin.route('/history_by_album/')
 def history_by_album():
     history = load_history()
     groups = {}
@@ -1388,17 +1473,15 @@ def history_by_album():
     for album, songs in groups.items():
         items.append({
             'label': f'{album} ({len(songs)} 首)',
-            'path': plugin.url_for('history_group_album', album=album),
+            'path': _url_for('history_group_album', album=album),
             'is_playable': False
         })
 
     return items
 
-@plugin.route('/history/')
 def history():
     return history_page(filter='all')
 
-@plugin.route('/history_filter/<filter>/')
 def history_filter(filter):
     return history_page(filter)
 
@@ -1416,37 +1499,37 @@ def history_page(filter):
     # 顶部按钮
     items.append({
         'label': '▶ 再次播放全部',
-        'path': plugin.url_for('history_play_all'),
+        'path': _url_for('history_play_all'),
         'is_playable': True
     })
     items.append({
         'label': '🗑 清空历史记录',
-        'path': plugin.url_for('history_clear'),
+        'path': _url_for('history_clear'),
         'is_playable': False
     })
     items.append({
         'label': '📅 最近 7 天',
-        'path': plugin.url_for('history_filter', filter='7'),
+        'path': _url_for('history_filter', filter='7'),
         'is_playable': False
     })
     items.append({
         'label': '📅 最近 30 天',
-        'path': plugin.url_for('history_filter', filter='30'),
+        'path': _url_for('history_filter', filter='30'),
         'is_playable': False
     })
     items.append({
         'label': '📅 全部历史',
-        'path': plugin.url_for('history'),
+        'path': _url_for('history'),
         'is_playable': False
     })
     items.append({
         'label': '👤 按歌手分组',
-        'path': plugin.url_for('history_by_artist'),
+        'path': _url_for('history_by_artist'),
         'is_playable': False
     })
     items.append({
         'label': '💿 按专辑分组',
-        'path': plugin.url_for('history_by_album'),
+        'path': _url_for('history_by_album'),
         'is_playable': False
     })
 
@@ -1469,19 +1552,18 @@ def history_page(filter):
 
     xbmc.log('plugin.audio.music: history datas sources: %s' % [d.get('source') for d in datas], xbmc.LOGDEBUG)
     items.extend(get_songs_items(datas, source='history'))
-    # plugin.log.debug(f'history: {items}')
+    # xbmc.log(f'history: {items}', xbmc.LOGDEBUG)
     return items
 
 
 
 # 主目录
-@plugin.route('/')
 def index():
     items = []
     status = account['logined']
 
     # 自动缓存预热
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'auto_preload_cache') == 'true':
+    if ADDON.getSetting('auto_preload_cache') == 'true':
         import threading
         # 启动异步预热，不阻塞 UI
         thread = threading.Thread(target=preload_cache_async, daemon=True)
@@ -1493,84 +1575,84 @@ def index():
         liked_songs['pid'] = 0
     if 'ids' not in liked_songs:
         liked_songs['ids'] = []
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'like_tag') == 'true' and liked_songs['pid']:
+    if ADDON.getSetting('like_tag') == 'true' and liked_songs['pid']:
         res = music.playlist_detail(liked_songs['pid'])
         if res['code'] == 200:
             liked_songs['ids'] = [s['id'] for s in res.get('playlist', {}).get('trackIds', [])]
+        _save_storage('liked_songs', liked_songs)
 
     # 修改: 每日推荐不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'daily_recommend') == 'true':
+    if ADDON.getSetting('daily_recommend') == 'true':
         items.append(
-            {'label': '每日推荐', 'path': plugin.url_for('recommend_songs')})
+            {'label': '每日推荐', 'path': _url_for('recommend_songs')})
     # 修改: 私人FM不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'personal_fm') == 'true':
-        items.append({'label': '私人FM', 'path': plugin.url_for('personal_fm')})
+    if ADDON.getSetting('personal_fm') == 'true':
+        items.append({'label': '私人FM', 'path': _url_for('personal_fm')})
     # 修改: 我的歌单不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'my_playlists') == 'true':
+    if ADDON.getSetting('my_playlists') == 'true':
         # 只有在用户已登录（uid 不为空）时才显示"我的歌单"
         if account['uid']:
-            items.append({'label': '我的歌单', 'path': plugin.url_for(
+            items.append({'label': '我的歌单', 'path': _url_for(
                 'user_playlists', uid=account['uid'])})
     # 修改: 我的收藏不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'sublist') == 'true':
-        items.append({'label': '我的收藏', 'path': plugin.url_for('sublist')})
+    if ADDON.getSetting('sublist') == 'true':
+        items.append({'label': '我的收藏', 'path': _url_for('sublist')})
     # 修改: 推荐歌单不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'recommend_playlists') == 'true':
+    if ADDON.getSetting('recommend_playlists') == 'true':
         items.append(
-            {'label': '推荐歌单', 'path': plugin.url_for('recommend_playlists')})
+            {'label': '推荐歌单', 'path': _url_for('recommend_playlists')})
     # 修改: 黑胶时光机不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'vip_timemachine') == 'true':
+    if ADDON.getSetting('vip_timemachine') == 'true':
         items.append(
-            {'label': '黑胶时光机', 'path': plugin.url_for('vip_timemachine')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'rank') == 'true':
-        items.append({'label': '排行榜', 'path': plugin.url_for('toplists')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'hot_playlists') == 'true':
-        items.append({'label': '热门歌单', 'path': plugin.url_for('hot_playlists', offset='0')})
-        items.append({'label': '歌单分类', 'path': plugin.url_for('playlist_tags')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'top_artist') == 'true':
-        items.append({'label': '热门歌手', 'path': plugin.url_for('top_artists')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'top_mv') == 'true':
+            {'label': '黑胶时光机', 'path': _url_for('vip_timemachine')})
+    if ADDON.getSetting('rank') == 'true':
+        items.append({'label': '排行榜', 'path': _url_for('toplists')})
+    if ADDON.getSetting('hot_playlists') == 'true':
+        items.append({'label': '热门歌单', 'path': _url_for('hot_playlists', offset='0')})
+        items.append({'label': '歌单分类', 'path': _url_for('playlist_tags')})
+    if ADDON.getSetting('top_artist') == 'true':
+        items.append({'label': '热门歌手', 'path': _url_for('top_artists')})
+    if ADDON.getSetting('top_mv') == 'true':
         items.append(
-            {'label': '热门MV', 'path': plugin.url_for('top_mvs', offset='0')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'search') == 'true':
-        items.append({'label': '搜索', 'path': plugin.url_for('search')})
+            {'label': '热门MV', 'path': _url_for('top_mvs', offset='0')})
+    if ADDON.getSetting('search') == 'true':
+        items.append({'label': '搜索', 'path': _url_for('search')})
     # 修改: 我的云盘不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'cloud_disk') == 'true':
+    if ADDON.getSetting('cloud_disk') == 'true':
         items.append(
-            {'label': '我的云盘', 'path': plugin.url_for('cloud', offset='0')})
+            {'label': '我的云盘', 'path': _url_for('cloud', offset='0')})
     # 修改: 我的主页不再检查登录状态
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'home_page') == 'true':
+    if ADDON.getSetting('home_page') == 'true':
         # 只有在用户已登录（uid 不为空）时才显示"我的主页"
         if account['uid']:
             items.append(
-                {'label': '我的主页', 'path': plugin.url_for('user', id=account['uid'])})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'new_albums') == 'true':
+                {'label': '我的主页', 'path': _url_for('user', id=account['uid'])})
+    if ADDON.getSetting('new_albums') == 'true':
         items.append(
-            {'label': '新碟上架', 'path': plugin.url_for('new_albums', offset='0')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'new_albums') == 'true':
-        items.append({'label': '新歌速递', 'path': plugin.url_for('new_songs')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'mlog') == 'true':
+            {'label': '新碟上架', 'path': _url_for('new_albums', offset='0')})
+    if ADDON.getSetting('new_albums') == 'true':
+        items.append({'label': '新歌速递', 'path': _url_for('new_songs')})
+    if ADDON.getSetting('mlog') == 'true':
         items.append(
-            {'label': 'Mlog', 'path': plugin.url_for('mlog_category')})
+            {'label': 'Mlog', 'path': _url_for('mlog_category')})
 
     # TuneHub 功能入口
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'tunehub_search') == 'true':
-        items.append({'label': 'TuneHub 单平台搜索', 'path': plugin.url_for('tunehub_search')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'tunehub_aggregate_search') == 'true':
-        items.append({'label': 'TuneHub 聚合搜索', 'path': plugin.url_for('tunehub_aggregate_search')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'tunehub_playlist') == 'true':
-        items.append({'label': 'TuneHub 歌单', 'path': plugin.url_for('tunehub_playlist')})
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'tunehub_toplists') == 'true':
-        items.append({'label': 'TuneHub 排行榜', 'path': plugin.url_for('tunehub_toplists')})
+    if ADDON.getSetting('tunehub_search') == 'true':
+        items.append({'label': 'TuneHub 单平台搜索', 'path': _url_for('tunehub_search')})
+    if ADDON.getSetting('tunehub_aggregate_search') == 'true':
+        items.append({'label': 'TuneHub 聚合搜索', 'path': _url_for('tunehub_aggregate_search')})
+    if ADDON.getSetting('tunehub_playlist') == 'true':
+        items.append({'label': 'TuneHub 歌单', 'path': _url_for('tunehub_playlist')})
+    if ADDON.getSetting('tunehub_toplists') == 'true':
+        items.append({'label': 'TuneHub 排行榜', 'path': _url_for('tunehub_toplists')})
     items.append({
         'label': '📜 播放历史',
-        'path': plugin.url_for('history'),
+        'path': _url_for('history'),
         'is_playable': False
     })
 
     return items
 
-@plugin.route('/history_clear/')
 def history_clear():
     clear_play_history()
 
@@ -1578,8 +1660,7 @@ def history_clear():
     dialog.notification('历史记录', '已清空', xbmcgui.NOTIFICATION_INFO, 800, False)
 
     # 返回历史页面
-    return plugin.redirect(plugin.url_for('history'))
-@plugin.route('/history_play_all/')
+    xbmc.executebuiltin('Container.Update(plugin://plugin.audio.music/history/)'); return
 def history_play_all():
     history = get_play_history()
     if not history:
@@ -1594,7 +1675,7 @@ def history_play_all():
         listitem = xbmcgui.ListItem(label=h.get("name"))
         listitem.setArt({'icon': h.get("pic"), 'thumbnail': h.get("pic"), 'fanart': h.get("pic")})
 
-        plugin_path = plugin.url_for(
+        plugin_path = _url_for(
             'play',
             meida_type='song',
             song_id=str(h.get("id")),
@@ -1606,7 +1687,6 @@ def history_play_all():
         playlist.add(plugin_path, listitem)
 
     xbmc.Player().play(playlist, startpos=0)
-@plugin.route('/history_by_artist/')
 def history_by_artist():
     history = load_history()
     groups = {}
@@ -1619,12 +1699,11 @@ def history_by_artist():
     for artist, songs in groups.items():
         items.append({
             'label': f'{artist} ({len(songs)} 首)',
-            'path': plugin.url_for('history_group_artist', artist=artist),
+            'path': _url_for('history_group_artist', artist=artist),
             'is_playable': False
         })
 
     return items
-@plugin.route('/history_group_artist/<artist>/')
 def history_group_artist(artist):
     datas = get_play_history_by_artist(artist)
 
@@ -1649,7 +1728,6 @@ def history_group_artist(artist):
 
     return get_songs_items(songs, source='history')
 
-@plugin.route('/history_group_album/<album>/')
 def history_group_album(album):
     datas = get_play_history_by_album(album)
 
@@ -1675,7 +1753,6 @@ def history_group_album(album):
     return get_songs_items(songs, source='history')
 
 
-@plugin.route('/vip_timemachine/')
 def vip_timemachine():
     time_machine = safe_get_storage('time_machine')
     items = []
@@ -1693,6 +1770,7 @@ def vip_timemachine():
         return items
     weeks = resp.get('data', {}).get('detail', [])
     time_machine['weeks'] = weeks
+    _save_storage('time_machine', time_machine)
     for index, week in enumerate(weeks):
         start_date = time.strftime(
             "%m.%d", time.localtime(week['weekStartTime']//1000))
@@ -1747,7 +1825,7 @@ def vip_timemachine():
                 plot_info += '与'.join(emotions) + '\n'
         items.append({
             'label': title,
-            'path': plugin.url_for('vip_timemachine_week', index=index),
+            'path': _url_for('vip_timemachine_week', index=index),
             'info': {
                 'plot': plot_info
             },
@@ -1756,7 +1834,6 @@ def vip_timemachine():
     return items
 
 
-@plugin.route('/vip_timemachine_week/<index>/')
 def vip_timemachine_week(index):
     time_machine = safe_get_storage('time_machine')
     data = time_machine['weeks'][int(index)]['data']
@@ -1815,6 +1892,7 @@ def check_login_status(key):
             account['logined'] = True
             resp = music.user_level()
             account['uid'] = resp['data']['userId']
+            _save_storage('account', account)
             dialog = xbmcgui.Dialog()
             dialog.notification('登录成功', '请重启软件以解锁更多功能',
                                 xbmcgui.NOTIFICATION_INFO, 800, False)
@@ -1824,7 +1902,6 @@ def check_login_status(key):
     xbmc.executebuiltin('Action(Back)')
 
 
-@plugin.route('/qrcode_login/')
 def qrcode_login():
     if not qrcode_check():
         return
@@ -1852,7 +1929,6 @@ def qrcode_login():
 
 
 # Mlog广场
-@plugin.route('/mlog_category/')
 def mlog_category():
     categories = {
         '广场': 1001,
@@ -1873,16 +1949,15 @@ def mlog_category():
     items = []
     for category in categories:
         if categories[category] == 1001:
-            items.append({'label': category, 'path': plugin.url_for(
+            items.append({'label': category, 'path': _url_for(
                 'mlog', cid=categories[category], pagenum=1)})
         else:
-            items.append({'label': category, 'path': plugin.url_for(
+            items.append({'label': category, 'path': _url_for(
                 'mlog', cid=categories[category], pagenum=0)})
     return items
 
 
 # Mlog
-@plugin.route('/mlog/<cid>/<pagenum>/')
 def mlog(cid, pagenum):
     items = []
     resp = music.mlog_socialsquare(cid, pagenum)
@@ -1890,10 +1965,10 @@ def mlog(cid, pagenum):
     for video in mlogs:
         mid = video['id']
         if cid == '1002':
-            path = plugin.url_for('play', meida_type='mv',
+            path = _url_for('play', meida_type='mv',
                                   song_id=0, mv_id=mid, sourceId=cid, dt=0, source='netease')
         else:
-            path = plugin.url_for('play', meida_type='mlog',
+            path = _url_for('play', meida_type='mlog',
                                   song_id=0, mv_id=mid, sourceId=cid, dt=0, source='netease')
 
         items.append({
@@ -1910,13 +1985,12 @@ def mlog(cid, pagenum):
             },
             'info_type': 'video',
         })
-    items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+    items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
         'mlog', cid=cid, pagenum=int(pagenum)+1)})
     return items
 
 
 # 热门MV
-@plugin.route('/top_mvs/<offset>/')
 def top_mvs(offset):
     offset = int(offset)
     result = music.top_mv(offset=offset, limit=limit)
@@ -1924,19 +1998,17 @@ def top_mvs(offset):
     mvs = result['data']
     items = get_mvs_items(mvs)
     if more:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'top_mvs', offset=str(offset+limit))})
     return items
 
 
 # 新歌速递
-@plugin.route('/new_songs/')
 def new_songs():
     return get_songs_items(music.new_songs().get("data", []))
 
 
 # 新碟上架
-@plugin.route('/new_albums/<offset>/')
 def new_albums(offset):
     offset = int(offset)
     result = music.new_albums(offset=offset, limit=limit)
@@ -1944,32 +2016,28 @@ def new_albums(offset):
     albums = result.get('albums', [])
     items = get_albums_items(albums)
     if len(albums) + offset < total:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'new_albums', offset=str(offset+limit))})
     return items
 
 
 # 排行榜
-@plugin.route('/toplists/')
 def toplists():
     items = get_playlists_items(music.toplists().get("list", []))
     return items
 
 
 # 热门歌手
-@plugin.route('/top_artists/')
 def top_artists():
     return get_artists_items(music.top_artists().get("artists", []))
 
 
 # 每日推荐
-@plugin.route('/recommend_songs/')
 def recommend_songs():
-    widget = plugin.request.args.get('widget', ['0'])[0]
+    widget = _params.get('widget', '0')
     songs = music.recommend_playlist().get('data', {}).get('dailySongs', [])
     return get_songs_items(songs, source='recommend_songs', widget=widget)
 
-@plugin.route('/play_recommend_songs/<song_id>/<mv_id>/<dt>/')
 def play_recommend_songs(song_id, mv_id, dt):
     # 获取所有每日推荐歌曲
     songs = music.recommend_playlist().get('data', {}).get('dailySongs', [])
@@ -1993,7 +2061,7 @@ def play_recommend_songs(song_id, mv_id, dt):
 
     for i, track in enumerate(datas):
         priv = privileges[i] if i < len(privileges) else {}
-        if priv.get('pl', None) == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'hide_songs') == 'true':
+        if priv.get('pl', None) == 0 and ADDON.getSetting('hide_songs') == 'true':
             continue
 
         # 找到用户点击的那一首
@@ -2023,7 +2091,7 @@ def play_recommend_songs(song_id, mv_id, dt):
             listitem.setArt({'icon': picUrl, 'thumbnail': picUrl, 'fanart': picUrl})
 
         # ⭐ 推荐歌曲播放列表中的每一项必须指向 play()，不能指向 play_recommend_songs()
-        plugin_path = plugin.url_for(
+        plugin_path = _url_for(
             'play',
             meida_type='song',
             song_id=str(track['id']),
@@ -2042,10 +2110,10 @@ def play_recommend_songs(song_id, mv_id, dt):
     else:
         dialog = xbmcgui.Dialog()
         dialog.notification('播放失败', '每日推荐中没有可播放的歌曲', xbmcgui.NOTIFICATION_INFO, 800, False)
-        plugin.set_resolved_url(None)
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
 
     # 上传播放记录（只记录用户点击的那一首）
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true':
+    if ADDON.getSetting('upload_play_record') == 'true':
         try:
             result = music.daka(song_id, time=dt)
             if result.get('code') == 200:
@@ -2061,7 +2129,6 @@ def play_recommend_songs(song_id, mv_id, dt):
 
   
 
-@plugin.route('/play_playlist_songs/<playlist_id>/<song_id>/<mv_id>/<dt>/')
 def play_playlist_songs(playlist_id, song_id, mv_id, dt):
     # 获取歌单详情
     resp = music.playlist_detail(playlist_id)
@@ -2092,7 +2159,7 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
 
     for i, track in enumerate(datas):
         priv = privileges[i] if i < len(privileges) else {}
-        if priv.get('pl', None) == 0 and xbmcplugin.getSetting(int(sys.argv[1]), 'hide_songs') == 'true':
+        if priv.get('pl', None) == 0 and ADDON.getSetting('hide_songs') == 'true':
             continue  # 跳过不可播放的歌曲
 
         # 如果传进来的 song_id 为 0，则从第一首开始；否则从匹配的那一首开始
@@ -2118,7 +2185,7 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
         if picUrl is not None:
             listitem.setArt({'icon': picUrl, 'thumbnail': picUrl, 'fanart': picUrl})
 
-        plugin_path = plugin.url_for(
+        plugin_path = _url_for(
             'play',
             meida_type='song',
             song_id=str(track['id']),
@@ -2136,10 +2203,10 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
     else:
         dialog = xbmcgui.Dialog()
         dialog.notification('播放失败', '歌单中没有可播放的歌曲', xbmcgui.NOTIFICATION_INFO, 800, False)
-        plugin.set_resolved_url(None)
+        xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
 
     # 上传播放记录（这里用起始 song_id 和 dt）
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'upload_play_record') == 'true' and song_id != '0':
+    if ADDON.getSetting('upload_play_record') == 'true' and song_id != '0':
         try:
             result = music.daka(song_id, time=dt)
             if result.get('code') == 200:
@@ -2153,7 +2220,6 @@ def play_playlist_songs(playlist_id, song_id, mv_id, dt):
 
 
 # 历史日推
-@plugin.route('/history_recommend_songs/<date>/')
 def history_recommend_songs(date):
     return get_songs_items(music.history_recommend_detail(date).get('data', {}).get('songs', []))
 
@@ -2200,12 +2266,12 @@ def get_albums_items(albums):
         artists = [[a['name'], a['id']] for a in album['artists']]
         artists_str = '/'.join([a[0] for a in artists])
         context_menu = [
-            ('播放专辑', 'RunPlugin(%s)' % plugin.url_for('play_album', album_id=album_id)),
-            ('跳转到歌手: ' + artists_str, 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(artists)))
+            ('播放专辑', 'RunPlugin(%s)' % _url_for('play_album', album_id=album_id)),
+            ('跳转到歌手: ' + artists_str, 'RunPlugin(%s)' % _url_for('to_artist', artists=json.dumps(artists)))
         ]
         items.append({
             'label': artists_str + ' - ' + name,
-            'path': plugin.url_for('album', id=album_id),
+            'path': _url_for('album', id=album_id),
             'icon': picUrl,
             'thumbnail': picUrl,
             'fanart': picUrl,
@@ -2216,7 +2282,6 @@ def get_albums_items(albums):
     return items
 
 
-@plugin.route('/albums/<artist_id>/<offset>/')
 def albums(artist_id, offset):
     offset = int(offset)
     result = music.artist_album(artist_id, offset=offset, limit=limit)
@@ -2224,18 +2289,16 @@ def albums(artist_id, offset):
     albums = result.get('hotAlbums', [])
     items = get_albums_items(albums)
     if more:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'albums', artist_id=artist_id, offset=str(offset+limit))})
     return items
 
 
-@plugin.route('/album/<id>/')
 def album(id):
     result = music.album(id)
     return get_songs_items(result.get("songs", []), sourceId=id, picUrl=result.get('album', {}).get('picUrl', ''))
 
 
-@plugin.route('/artist/<id>/')
 def artist(id):
     info = music.artist_info(id).get("artist", {})
     artist_pic = info.get('picUrl', '')
@@ -2248,7 +2311,7 @@ def artist(id):
     items = [
         {
             'label': artist_name or 'Artist',
-            'path': plugin.url_for('hot_songs', id=id),
+            'path': _url_for('hot_songs', id=id),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
@@ -2257,7 +2320,7 @@ def artist(id):
         },
         {
             'label': '所有歌曲',
-            'path': plugin.url_for('artist_songs', id=id, offset=0),
+            'path': _url_for('artist_songs', id=id, offset=0),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
@@ -2266,7 +2329,7 @@ def artist(id):
         },
         {
             'label': '专辑',
-            'path': plugin.url_for('albums', artist_id=id, offset='0'),
+            'path': _url_for('albums', artist_id=id, offset='0'),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
@@ -2275,7 +2338,7 @@ def artist(id):
         },
         {
             'label': 'MV',
-            'path': plugin.url_for('artist_mvs', id=id, offset=0),
+            'path': _url_for('artist_mvs', id=id, offset=0),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
@@ -2287,7 +2350,7 @@ def artist(id):
     if 'accountId' in info:
         items.append({
             'label': '用户页',
-            'path': plugin.url_for('user', id=info['accountId']),
+            'path': _url_for('user', id=info['accountId']),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
@@ -2297,7 +2360,7 @@ def artist(id):
     if account['logined']:
         items.append({
             'label': '相似歌手',
-            'path': plugin.url_for('similar_artist', id=id),
+            'path': _url_for('similar_artist', id=id),
             'icon': artist_pic,
             'thumbnail': artist_pic,
             'fanart': artist_pic,
@@ -2306,13 +2369,11 @@ def artist(id):
     return items
 
 
-@plugin.route('/similar_artist/<id>/<offset>/')
 def similar_artist(id, offset=0):
     artists = music.similar_artist(id).get("artists", [])
     return get_artists_items(artists)
 
 
-@plugin.route('/artist_mvs/<id>/<offset>/')
 def artist_mvs(id, offset):
     offset = int(offset)
     result = music.artist_mvs(id, offset, limit)
@@ -2320,12 +2381,11 @@ def artist_mvs(id, offset):
     mvs = result.get("mvs", [])
     items = get_mvs_items(mvs)
     if more:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'albums', id=id, offset=str(offset+limit))})
     return items
 
 
-@plugin.route('/hot_songs/<id>/')
 def hot_songs(id):
     result = music.artists(id).get("hotSongs", [])
     ids = [a['id'] for a in result]
@@ -2335,7 +2395,6 @@ def hot_songs(id):
     return get_songs_items(datas, privileges=privileges)
 
 
-@plugin.route('/artist_songs/<id>/<offset>/')
 def artist_songs(id, offset):
     result = music.artist_songs(id, limit=limit, offset=offset)
     ids = [a['id'] for a in result.get('songs', [])]
@@ -2344,26 +2403,24 @@ def artist_songs(id, offset):
     privileges = resp['privileges']
     items = get_songs_items(datas, privileges=privileges)
     if result['more']:
-        items.append({'label': '[COLOR yellow]下一页[/COLOR]', 'path': plugin.url_for(
+        items.append({'label': '[COLOR yellow]下一页[/COLOR]', 'path': _url_for(
             'artist_songs', id=id, offset=int(offset)+limit)})
     return items
 
 
 # 我的收藏
-@plugin.route('/sublist/')
 def sublist():
     items = [
-        {'label': '歌手', 'path': plugin.url_for('artist_sublist')},
-        {'label': '专辑', 'path': plugin.url_for('album_sublist')},
-        {'label': '视频', 'path': plugin.url_for('video_sublist')},
-        {'label': '播单', 'path': plugin.url_for('dj_sublist', offset=0)},
-        {'label': '我的数字专辑', 'path': plugin.url_for('digitalAlbum_purchased')},
-        {'label': '已购单曲', 'path': plugin.url_for('song_purchased', offset=0)},
+        {'label': '歌手', 'path': _url_for('artist_sublist')},
+        {'label': '专辑', 'path': _url_for('album_sublist')},
+        {'label': '视频', 'path': _url_for('video_sublist')},
+        {'label': '播单', 'path': _url_for('dj_sublist', offset=0)},
+        {'label': '我的数字专辑', 'path': _url_for('digitalAlbum_purchased')},
+        {'label': '已购单曲', 'path': _url_for('song_purchased', offset=0)},
     ]
     return items
 
 
-@plugin.route('/song_purchased/<offset>/')
 def song_purchased(offset):
     result = music.single_purchased(offset=offset, limit=limit)
     ids = [a['songId'] for a in result.get('data', {}).get('list', [])]
@@ -2374,17 +2431,16 @@ def song_purchased(offset):
 
     if result.get('data', {}).get('hasMore', False):
         items.append({'label': '[COLOR yellow]下一页[/COLOR]',
-                     'path': plugin.url_for('song_purchased', offset=int(offset)+limit)})
+                     'path': _url_for('song_purchased', offset=int(offset)+limit)})
     return items
 
 
-@plugin.route('/dj_sublist/<offset>/')
 def dj_sublist(offset):
     result = music.dj_sublist(offset=offset, limit=limit)
     items = get_djlists_items(result.get('djRadios', []))
     if result['hasMore']:
         items.append({'label': '[COLOR yellow]下一页[/COLOR]',
-                     'path': plugin.url_for('dj_sublist', offset=int(offset)+limit)})
+                     'path': _url_for('dj_sublist', offset=int(offset)+limit)})
     return items
 
 
@@ -2404,7 +2460,7 @@ def get_djlists_items(playlists):
             plot_info += '创建用户: ' + \
                 playlist['dj']['nickname'] + '  id: ' + \
                 str(playlist['dj']['userId']) + '\n'
-            context_menu.append(('跳转到用户: ' + playlist['dj']['nickname'], 'Container.Update(%s)' % plugin.url_for('user', id=playlist['dj']['userId'])))
+            context_menu.append(('跳转到用户: ' + playlist['dj']['nickname'], 'Container.Update(%s)' % _url_for('user', id=playlist['dj']['userId'])))
         if 'createTime' in playlist and playlist['createTime'] is not None:
             plot_info += '创建时间: '+trans_time(playlist['createTime'])+'\n'
         if 'desc' in playlist and playlist['desc'] is not None:
@@ -2421,7 +2477,7 @@ def get_djlists_items(playlists):
 
         items.append({
             'label': name,
-            'path': plugin.url_for('djlist', id=playlist['id'], offset=0),
+            'path': _url_for('djlist', id=playlist['id'], offset=0),
             'icon': img_url,
             'thumbnail': img_url,
             'context_menu': context_menu,
@@ -2433,9 +2489,8 @@ def get_djlists_items(playlists):
     return items
 
 
-@plugin.route('/djlist/<id>/<offset>/')
 def djlist(id, offset):
-    if xbmcplugin.getSetting(int(sys.argv[1]), 'reverse_radio') == 'true':
+    if ADDON.getSetting('reverse_radio') == 'true':
         asc = False
     else:
         asc = True
@@ -2443,7 +2498,7 @@ def djlist(id, offset):
     items = get_dj_items(resp.get('programs', []), id)
     if resp.get('more', False):
         items.append({'label': '[COLOR yellow]下一页[/COLOR]',
-                     'path': plugin.url_for('djlist', id=id, offset=int(offset)+limit)})
+                     'path': _url_for('djlist', id=id, offset=int(offset)+limit)})
     return items
 
 
@@ -2466,7 +2521,7 @@ def get_dj_items(songs, sourceId):
 
         items.append({
             'label': label,
-            'path': plugin.url_for('play', meida_type='dj', song_id=str(play['id']), mv_id=str(0), sourceId=str(sourceId), dt=str(play['duration']//1000), source='netease'),
+            'path': _url_for('play', meida_type='dj', song_id=str(play['id']), mv_id=str(0), sourceId=str(sourceId), dt=str(play['duration']//1000), source='netease'),
             'is_playable': True,
             'icon': play.get('coverUrl', None),
             'thumbnail': play.get('coverUrl', None),
@@ -2486,7 +2541,6 @@ def get_dj_items(songs, sourceId):
     return items
 
 
-@plugin.route('/digitalAlbum_purchased/')
 def digitalAlbum_purchased():
     # items = []
     albums = music.digitalAlbum_purchased().get("paidAlbums", [])
@@ -2500,11 +2554,11 @@ def get_mvs_items(mvs):
         if 'artists' in mv:
             name = '/'.join([artist['name'] for artist in mv['artists']])
             artists = [[a['name'], a['id']] for a in mv['artists']]
-            context_menu.append(('跳转到歌手: ' + name, 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(artists))))
+            context_menu.append(('跳转到歌手: ' + name, 'RunPlugin(%s)' % _url_for('to_artist', artists=json.dumps(artists))))
         elif 'artist' in mv:
             name = mv['artist']['name']
             artists = [[mv['artist']['name'], mv['artist']['id']]]
-            context_menu.append(('跳转到歌手: ' + name, 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(artists))))
+            context_menu.append(('跳转到歌手: ' + name, 'RunPlugin(%s)' % _url_for('to_artist', artists=json.dumps(artists))))
         elif 'artistName' in mv:
             name = mv['artistName']
         else:
@@ -2566,7 +2620,6 @@ def get_videos_items(videos):
     return items
 
 
-@plugin.route('/playlist_contextmenu/<action>/<id>/')
 def playlist_contextmenu(action, id):
     if action == 'subscribe':
         resp = music.playlist_subscribe(id)
@@ -2613,8 +2666,10 @@ def get_playlists_items(playlists):
             liked_songs = safe_get_storage('liked_songs')
             if liked_songs['pid']:
                 liked_songs['pid'] = playlist['id']
+                _save_storage('liked_songs', liked_songs)
             else:
                 liked_songs['pid'] = playlist['id']
+                _save_storage('liked_songs', liked_songs)
                 res = music.playlist_detail(liked_songs['pid'])
                 if res['code'] == 200:
                     liked_songs['ids'] = [s['id'] for s in res.get('playlist', {}).get('trackIds', [])]
@@ -2630,18 +2685,18 @@ def get_playlists_items(playlists):
         if 'subscribed' in playlist and playlist['subscribed'] is not None:
             if playlist['subscribed']:
                 plot_info += '收藏状态: 已收藏\n'
-                item = ('取消收藏', 'RunPlugin(%s)' % plugin.url_for(
+                item = ('取消收藏', 'RunPlugin(%s)' % _url_for(
                     'playlist_contextmenu', action='unsubscribe', id=playlist['id']))
                 context_menu.append(item)
             else:
                 if 'creator' in playlist and playlist['creator'] is not None and str(playlist['creator']['userId']) != account['uid']:
                     plot_info += '收藏状态: 未收藏\n'
-                    item = ('收藏', 'RunPlugin(%s)' % plugin.url_for(
+                    item = ('收藏', 'RunPlugin(%s)' % _url_for(
                         'playlist_contextmenu', action='subscribe', id=playlist['id']))
                     context_menu.append(item)
         else:
             if 'creator' in playlist and playlist['creator'] is not None and str(playlist['creator']['userId']) != account['uid']:
-                item = ('收藏', 'RunPlugin(%s)' % plugin.url_for(
+                item = ('收藏', 'RunPlugin(%s)' % _url_for(
                     'playlist_contextmenu', action='subscribe', id=playlist['id']))
                 context_menu.append(item)
 
@@ -2660,7 +2715,7 @@ def get_playlists_items(playlists):
         else:
             creator_name = '网易云音乐'
             creator_id = 1
-        context_menu.append(('跳转到用户: ' + creator_name, 'Container.Update(%s)' % plugin.url_for('user', id=creator_id)))
+        context_menu.append(('跳转到用户: ' + creator_name, 'Container.Update(%s)' % _url_for('user', id=creator_id)))
         if 'createTime' in playlist and playlist['createTime'] is not None:
             plot_info += '创建时间: '+trans_time(playlist['createTime'])+'\n'
         if 'description' in playlist and playlist['description'] is not None:
@@ -2689,13 +2744,13 @@ def get_playlists_items(playlists):
         else:
             ptype = 'normal'
         if 'creator' in playlist and playlist['creator'] is not None and str(playlist['creator']['userId']) == account['uid']:
-            item = ('删除歌单', 'RunPlugin(%s)' % plugin.url_for(
+            item = ('删除歌单', 'RunPlugin(%s)' % _url_for(
                 'playlist_contextmenu', action='delete', id=playlist['id']))
             context_menu.append(item)
 
         items.append({
             'label': name,
-            'path': plugin.url_for('playlist', ptype=ptype, id=playlist['id']),
+            'path': _url_for('playlist', ptype=ptype, id=playlist['id']),
             'icon': img_url,
             'thumbnail': img_url,
             'fanart': img_url,
@@ -2708,12 +2763,10 @@ def get_playlists_items(playlists):
     return items
 
 
-@plugin.route('/video_sublist/')
 def video_sublist():
     return get_videos_items(music.video_sublist().get("data", []))
 
 
-@plugin.route('/album_sublist/')
 def album_sublist():
     return get_albums_items(music.album_sublist().get("data", []))
 
@@ -2740,7 +2793,7 @@ def get_artists_items(artists):
 
         items.append({
             'label': name,
-            'path': plugin.url_for('artist', id=artist['id']),
+            'path': _url_for('artist', id=artist['id']),
             'icon': artist['picUrl'],
             'thumbnail': artist['picUrl'],
             'fanart': artist['picUrl'],
@@ -2759,11 +2812,11 @@ def get_users_items(users):
         if 'followed' in user:
             if user['followed'] == True:
                 plot_info += '  [COLOR red]已关注[/COLOR]\n'
-                context_menu = [('取消关注', 'RunPlugin(%s)' % plugin.url_for(
+                context_menu = [('取消关注', 'RunPlugin(%s)' % _url_for(
                     'follow_user', type='0', id=user['userId']))]
             else:
                 plot_info += '\n'
-                context_menu = [('关注该用户', 'RunPlugin(%s)' % plugin.url_for(
+                context_menu = [('关注该用户', 'RunPlugin(%s)' % _url_for(
                     'follow_user', type='1', id=user['userId']))]
         else:
             plot_info += '\n'
@@ -2797,7 +2850,7 @@ def get_users_items(users):
 
         items.append({
             'label': user['nickname']+' '+level_str,
-            'path': plugin.url_for('user', id=user['userId']),
+            'path': _url_for('user', id=user['userId']),
             'icon': user['avatarUrl'],
             'thumbnail': user['avatarUrl'],
             'context_menu': context_menu,
@@ -2807,7 +2860,6 @@ def get_users_items(users):
     return items
 
 
-@plugin.route('/follow_user/<type>/<id>/')
 def follow_user(type, id):
     # result = music.user_follow(type, id)
     if type == '1':
@@ -2838,52 +2890,48 @@ def follow_user(type, id):
                     '取消关注用户', result['msg'], xbmcgui.NOTIFICATION_INFO, 800, False)
 
 
-@plugin.route('/user/<id>/')
 def user(id):
     items = [
-        {'label': '歌单', 'path': plugin.url_for('user_playlists', uid=id)},
-        {'label': '听歌排行', 'path': plugin.url_for('play_record', uid=id)},
-        {'label': '关注列表', 'path': plugin.url_for(
+        {'label': '歌单', 'path': _url_for('user_playlists', uid=id)},
+        {'label': '听歌排行', 'path': _url_for('play_record', uid=id)},
+        {'label': '关注列表', 'path': _url_for(
             'user_getfollows', uid=id, offset='0')},
-        {'label': '粉丝列表', 'path': plugin.url_for(
+        {'label': '粉丝列表', 'path': _url_for(
             'user_getfolloweds', uid=id, offset=0)},
     ]
 
     if account['uid'] == id:
         items.append(
-            {'label': '每日推荐', 'path': plugin.url_for('recommend_songs')})
+            {'label': '每日推荐', 'path': _url_for('recommend_songs')})
         items.append(
-            {'label': '历史日推', 'path': plugin.url_for('history_recommend_dates')})
+            {'label': '历史日推', 'path': _url_for('history_recommend_dates')})
 
     info = music.user_detail(id)
     if 'artistId' in info.get('profile', {}):
-        items.append({'label': '歌手页', 'path': plugin.url_for(
+        items.append({'label': '歌手页', 'path': _url_for(
             'artist', id=info['profile']['artistId'])})
     return items
 
 
-@plugin.route('/history_recommend_dates/')
 def history_recommend_dates():
     dates = music.history_recommend_recent().get('data', {}).get('dates', [])
     items = []
     for date in dates:
-        items.append({'label': date, 'path': plugin.url_for(
+        items.append({'label': date, 'path': _url_for(
             'history_recommend_songs', date=date)})
     return items
 
 
-@plugin.route('/play_record/<uid>/')
 def play_record(uid):
     items = [
-        {'label': '最近一周', 'path': plugin.url_for(
+        {'label': '最近一周', 'path': _url_for(
             'show_play_record', uid=uid, type='1')},
-        {'label': '全部时间', 'path': plugin.url_for(
+        {'label': '全部时间', 'path': _url_for(
             'show_play_record', uid=uid, type='0')},
     ]
     return items
 
 
-@plugin.route('/show_play_record/<uid>/<type>/')
 def show_play_record(uid, type):
     result = music.play_record(uid, type)
     code = result.get('code', -1)
@@ -2904,7 +2952,6 @@ def show_play_record(uid, type):
         return items
 
 
-@plugin.route('/user_getfolloweds/<uid>/<offset>/')
 def user_getfolloweds(uid, offset):
     result = music.user_getfolloweds(userId=uid, offset=offset, limit=limit)
     more = result['more']
@@ -2912,12 +2959,11 @@ def user_getfolloweds(uid, offset):
     items = get_users_items(followeds)
     if more:
         # time = followeds[-1]['time']
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'user_getfolloweds', uid=uid, offset=int(offset)+limit)})
     return items
 
 
-@plugin.route('/user_getfollows/<uid>/<offset>/')
 def user_getfollows(uid, offset):
     offset = int(offset)
     result = music.user_getfollows(uid, offset=offset, limit=limit)
@@ -2925,35 +2971,32 @@ def user_getfollows(uid, offset):
     follows = result['follow']
     items = get_users_items(follows)
     if more:
-        items.append({'label': '[COLOR yellow]下一页[/COLOR]', 'path': plugin.url_for(
+        items.append({'label': '[COLOR yellow]下一页[/COLOR]', 'path': _url_for(
             'user_getfollows', uid=uid, offset=str(offset+limit))})
     return items
 
 
-@plugin.route('/artist_sublist/')
 def artist_sublist():
     return get_artists_items(music.artist_sublist().get("data", []))
 
 
-@plugin.route('/search/')
 def search():
     items = [
-        {'label': '综合搜索', 'path': plugin.url_for('sea', type='1018')},
-        {'label': '单曲搜索', 'path': plugin.url_for('sea', type='1')},
-        {'label': '歌手搜索', 'path': plugin.url_for('sea', type='100')},
-        {'label': '专辑搜索', 'path': plugin.url_for('sea', type='10')},
-        {'label': '歌单搜索', 'path': plugin.url_for('sea', type='1000')},
-        {'label': '云盘搜索', 'path': plugin.url_for('sea', type='-1')},
-        {'label': 'M V搜索', 'path': plugin.url_for('sea', type='1004')},
-        {'label': '视频搜索', 'path': plugin.url_for('sea', type='1014')},
-        {'label': '歌词搜索', 'path': plugin.url_for('sea', type='1006')},
-        {'label': '用户搜索', 'path': plugin.url_for('sea', type='1002')},
-        {'label': '播客搜索', 'path': plugin.url_for('sea', type='1009')},
+        {'label': '综合搜索', 'path': _url_for('sea', type='1018')},
+        {'label': '单曲搜索', 'path': _url_for('sea', type='1')},
+        {'label': '歌手搜索', 'path': _url_for('sea', type='100')},
+        {'label': '专辑搜索', 'path': _url_for('sea', type='10')},
+        {'label': '歌单搜索', 'path': _url_for('sea', type='1000')},
+        {'label': '云盘搜索', 'path': _url_for('sea', type='-1')},
+        {'label': 'M V搜索', 'path': _url_for('sea', type='1004')},
+        {'label': '视频搜索', 'path': _url_for('sea', type='1014')},
+        {'label': '歌词搜索', 'path': _url_for('sea', type='1006')},
+        {'label': '用户搜索', 'path': _url_for('sea', type='1002')},
+        {'label': '播客搜索', 'path': _url_for('sea', type='1009')},
     ]
     return items
 
 
-@plugin.route('/sea/<type>/')
 def sea(type):
     items = []
     keyboard = xbmc.Keyboard('', '请输入搜索内容')
@@ -3021,7 +3064,7 @@ def sea(type):
         if 'songs' in result:
             sea_songs = result.get('songs', [])
 
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'hide_cover_songs') == 'true':
+            if ADDON.getSetting('hide_cover_songs') == 'true':
                 filtered_songs = [
                     song for song in sea_songs if '翻自' not in song['name'] and 'cover' not in song['name'].lower()]
             else:
@@ -3062,7 +3105,7 @@ def sea(type):
             for i in range(len(datas)):
                 datas[i]['lyrics'] = sea_songs[i]['lyrics']
 
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'hide_cover_songs') == 'true':
+            if ADDON.getSetting('hide_cover_songs') == 'true':
                 filtered_datas = []
                 filtered_privileges = []
                 for i in range(len(datas)):
@@ -3232,7 +3275,7 @@ def sea(type):
             # is_empty = False
             # items.extend(get_songs_items([song['id'] for song in result['song']['songs']],getmv=False))
             sea_songs = result['song']['songs']
-            if xbmcplugin.getSetting(int(sys.argv[1]), 'hide_cover_songs') == 'true':
+            if ADDON.getSetting('hide_cover_songs') == 'true':
                 filtered_songs = [
                     song for song in sea_songs if '翻自' not in song['name'] and 'cover' not in song['name'].lower()]
             else:
@@ -3249,7 +3292,6 @@ def sea(type):
     return items
 
 
-@plugin.route('/personal_fm/')
 def personal_fm():
     songs = []
     for i in range(10):
@@ -3257,7 +3299,6 @@ def personal_fm():
     return get_songs_items(songs)
 
 
-@plugin.route('/tunehub_search/')
 def tunehub_search():
     # 显示三个平台文件夹
     platforms = [
@@ -3269,12 +3310,11 @@ def tunehub_search():
     for platform in platforms:
         items.append({
             'label': platform['name'],
-            'path': plugin.url_for('tunehub_search_platform', source=platform['source']),
+            'path': _url_for('tunehub_search_platform', source=platform['source']),
             'is_playable': False,
         })
     return items
 
-@plugin.route('/tunehub_search_platform/<source>/')
 def tunehub_search_platform(source):
     keyboard = xbmc.Keyboard('', '请输入搜索关键词')
     keyboard.doModal()
@@ -3311,7 +3351,6 @@ def tunehub_search_platform(source):
     return items
 
 
-@plugin.route('/tunehub_aggregate_search/')
 def tunehub_aggregate_search():
     keyboard = xbmc.Keyboard('', '请输入搜索关键词')
     keyboard.doModal()
@@ -3362,7 +3401,6 @@ def tunehub_aggregate_search():
     return items
 
 
-@plugin.route('/tunehub_playlist/')
 def tunehub_playlist():
     # 显示三个平台文件夹
     platforms = [
@@ -3374,12 +3412,11 @@ def tunehub_playlist():
     for platform in platforms:
         items.append({
             'label': platform['name'],
-            'path': plugin.url_for('tunehub_playlist_platform', source=platform['source']),
+            'path': _url_for('tunehub_playlist_platform', source=platform['source']),
             'is_playable': False,
         })
     return items
 
-@plugin.route('/tunehub_playlist_platform/<source>/')
 def tunehub_playlist_platform(source):
     keyboard = xbmc.Keyboard('', '请输入歌单 ID')
     keyboard.doModal()
@@ -3402,13 +3439,12 @@ def tunehub_playlist_platform(source):
     for t in tracks:
         name = t.get('name') or ''
         artist = t.get('artist') or t.get('artistName') or ''
-        items.append({'label': name + (' - ' + artist if artist else ''), 'path': plugin.url_for('tunehub_play', source=source, id=t.get('id'), br='320k')})
+        items.append({'label': name + (' - ' + artist if artist else ''), 'path': _url_for('tunehub_play', source=source, id=t.get('id'), br='320k')})
     if not items:
         xbmcgui.Dialog().notification('TuneHub', '未找到歌单或歌单为空', xbmcgui.NOTIFICATION_INFO, 800, False)
     return items
 
 
-@plugin.route('/tunehub_toplists/')
 def tunehub_toplists():
     # 显示三个平台文件夹
     platforms = [
@@ -3420,12 +3456,11 @@ def tunehub_toplists():
     for platform in platforms:
         items.append({
             'label': platform['name'],
-            'path': plugin.url_for('tunehub_toplists_platform', source=platform['source']),
+            'path': _url_for('tunehub_toplists_platform', source=platform['source']),
             'is_playable': False,
         })
     return items
 
-@plugin.route('/tunehub_toplists_platform/<source>/')
 def tunehub_toplists_platform(source):
     # 显示特定平台的排行榜
     resp = music.tunehub_toplists(source=source, type='toplists')
@@ -3482,7 +3517,7 @@ def tunehub_toplists_platform(source):
             plot_info += '排行榜id: ' + str(pid) + '\n'
             item = {
                 'label': title,
-                'path': plugin.url_for('tunehub_toplist', source=item_source, id=pid),
+                'path': _url_for('tunehub_toplist', source=item_source, id=pid),
                 'icon': pic,
                 'thumbnail': pic,
                 'fanart': pic,
@@ -3497,7 +3532,7 @@ def tunehub_toplists_platform(source):
 
 
 def get_db():
-    addon_data = xbmcvfs.translatePath(plugin.addon.getAddonInfo("profile"))
+    addon_data = xbmcvfs.translatePath(xbmcaddon.Addon().getAddonInfo("profile"))
     if not xbmcvfs.exists(addon_data):
         xbmcvfs.mkdirs(addon_data)
     db_path = os.path.join(addon_data, "cache.db")
@@ -3593,7 +3628,7 @@ def get_cached_cover(url, max_size_mb=200, max_files=2000):
     if not url:
         return ""
 
-    addon_data = xbmcvfs.translatePath(plugin.addon.getAddonInfo("profile"))
+    addon_data = xbmcvfs.translatePath(xbmcaddon.Addon().getAddonInfo("profile"))
     cover_dir = os.path.join(addon_data, "covers")
     if not xbmcvfs.exists(cover_dir):
         xbmcvfs.mkdirs(cover_dir)
@@ -3661,9 +3696,8 @@ def _cleanup_cover_cache(cover_dir, max_size_mb, max_files):
 # 收藏夹（本地 storage）
 # =========================
 
-@plugin.route('/favorite_toggle/<source>/<id>/<name>/<artist>/')
 def favorite_toggle(source, id, name, artist):
-    storage = plugin.get_storage()
+    storage = safe_get_storage('generic_store')
     favs = storage.get("favorites", [])
 
     exists = next((f for f in favs if f["id"] == id and f["source"] == source), None)
@@ -3682,15 +3716,15 @@ def favorite_toggle(source, id, name, artist):
         xbmcgui.Dialog().notification("收藏夹", "已加入收藏：%s" % name, xbmcgui.NOTIFICATION_INFO, 2000)
 
     storage["favorites"] = favs
+    _save_storage('favorites_store', storage)
 
     # 关键修复：不要使用 referrer
     return []
 
 
 
-@plugin.route('/favorites/')
 def favorites():
-    storage = plugin.get_storage()
+    storage = safe_get_storage('generic_store')
     favs = storage.get("favorites", [])
 
     items = []
@@ -3698,12 +3732,12 @@ def favorites():
         label = u"%s - %s [%s]" % (f["name"], f["artist"], f["source"])
         items.append({
             "label": label,
-            "path": plugin.url_for("tunehub_play", source=f["source"], id=f["id"], br="320k"),
+            "path": _url_for("tunehub_play", source=f["source"], id=f["id"], br="320k"),
             "is_playable": False,
             "context_menu": [
                 (
                     "取消收藏",
-                    'RunPlugin(%s)' % plugin.url_for(
+                    'RunPlugin(%s)' % _url_for(
                         "favorite_toggle",
                         source=f["source"],
                         id=f["id"],
@@ -3724,7 +3758,6 @@ def favorites():
 # TuneHub 榜单路由（最终版）
 # =========================
 
-@plugin.route('/tunehub_toplist/<source>/<id>/')
 def tunehub_toplist(source , id):
     """
     展示 TuneHub 榜单歌曲列表：
@@ -3739,15 +3772,15 @@ def tunehub_toplist(source , id):
     # -------------------------
     # 1. 读取缓存
     # -------------------------
-    cached = plugin.get_storage().get(cache_key)
+    cached = safe_get_storage('generic_store').get(cache_key)
     if cached and time.time() - cached["time"] < cache_ttl:
-        plugin.log.debug(f"[TuneHub] 使用缓存 toplist {source}/{id}")
+        xbmc.log(f'[TuneHub] 使用缓存 toplist {source}/{id}', xbmc.LOGDEBUG)
         return cached["items"]
 
     try:
         resp = music.tunehub_toplist(source, id)
     except Exception as e:
-        plugin.log.debug(f"[TuneHub] API 调用失败: {e}", level=xbmc.LOGERROR)
+        xbmc.log(f'[TuneHub] API 调用失败: {e}', xbmc.LOGERROR)
         xbmcgui.Dialog().notification("TuneHub", "排行榜加载失败", xbmcgui.NOTIFICATION_ERROR, 3000)
         return []
 
@@ -3789,7 +3822,7 @@ def tunehub_toplist(source , id):
         # 4. 构建 item
         # -------------------------
         if pid:
-            path = plugin.url_for("tunehub_play", source=platform, id=pid, br="320k")
+            path = _url_for("tunehub_play", source=platform, id=pid, br="320k")
             is_playable = True
         else:
             path = url
@@ -3822,15 +3855,15 @@ def tunehub_toplist(source , id):
             if valid_artists:
                 # 如果只有一个艺术家
                 if len(valid_artists) == 1:
-                    context_menu.append(('跳转到歌手: ' + valid_artists[0][0], 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(valid_artists))))
+                    context_menu.append(('跳转到歌手: ' + valid_artists[0][0], 'RunPlugin(%s)' % _url_for('to_artist', artists=json.dumps(valid_artists))))
                 else:
                     # 如果有多个艺术家，提供选择
-                    context_menu.append(('跳转到歌手: ' + artist, 'RunPlugin(%s)' % plugin.url_for('to_artist', artists=json.dumps(valid_artists))))
+                    context_menu.append(('跳转到歌手: ' + artist, 'RunPlugin(%s)' % _url_for('to_artist', artists=json.dumps(valid_artists))))
 
         # 添加收藏到歌单选项
         if pid:
             context_menu.extend([
-                ('收藏到歌单', 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='sub_playlist', meida_type='song',
+                ('收藏到歌单', 'RunPlugin(%s)' % _url_for('song_contextmenu', action='sub_playlist', meida_type='song',
                  song_id=str(pid), mv_id='0', sourceId='0', dt=str(duration//1000 if duration > 1000 else duration))),
                 ('歌曲ID:'+str(pid), ''),
             ])
@@ -3866,15 +3899,14 @@ def tunehub_toplist(source , id):
     # -------------------------
     # 6. 写入缓存
     # -------------------------
-    plugin.get_storage()[cache_key] = {"time": time.time(), "items": items}
+    _s = safe_get_storage('generic_store'); _s[cache_key] = {"time": time.time(), "items": items}; _save_storage('generic_store', _s)
 
-    plugin.log.debug(f"[TuneHub] 成功加载 toplist {source}/{id}，共 {len(items)} 首")
+    xbmc.log(f'[TuneHub] 成功加载 toplist {source}/{id}，共 {len(items)} 首', xbmc.LOGDEBUG)
 
     return items
 
 
 
-@plugin.route('/tunehub_play/<source>/<id>/<br>/')
 def tunehub_play(source, id, br='320k'):
 
 
@@ -3932,9 +3964,9 @@ def tunehub_play(source, id, br='320k'):
             pic=pic,
             duration=dt // 1000
         )
-        plugin.log.debug(f"[TuneHub] 写入历史成功")
+        xbmc.log(f'[TuneHub] 写入历史成功', xbmc.LOGDEBUG)
     except Exception as e:
-        plugin.log.debug(f"[TuneHub] 写入历史失败: {e}")
+        xbmc.log(f'[TuneHub] 写入历史失败: {e}', xbmc.LOGDEBUG)
     # 4. 构造 Kodi 原生 ListItem
     li = xbmcgui.ListItem(label=title or "")
     li.setPath(url)
@@ -3963,12 +3995,10 @@ def tunehub_play(source, id, br='320k'):
 
 
 
-@plugin.route('/recommend_playlists/')
 def recommend_playlists():
     return get_playlists_items(music.recommend_resource().get("recommend", []))
 
 
-@plugin.route('/playlist_tags/')
 def playlist_tags():
     """
     显示歌单标签列表（文件夹形式）
@@ -4000,7 +4030,7 @@ def playlist_tags():
     all_info = tags_data.get('all', {})
     items.append({
         'label': all_info.get('name', '全部歌单'),
-        'path': plugin.url_for('hot_playlists_by_tag', category='全部', offset='0'),
+        'path': _url_for('hot_playlists_by_tag', category='全部', offset='0'),
         'is_playable': False
     })
 
@@ -4026,7 +4056,7 @@ def playlist_tags():
                     continue
 
                 # 构建标签 URL
-                url = plugin.url_for('hot_playlists_by_tag', category=tag_name, offset='0')
+                url = _url_for('hot_playlists_by_tag', category=tag_name, offset='0')
 
                 # 添加到列表
                 items.append({
@@ -4038,7 +4068,6 @@ def playlist_tags():
     return items
 
 
-@plugin.route('/hot_playlists_by_tag/<category>/<offset>/')
 def hot_playlists_by_tag(category, offset):
     """
     按标签显示热门歌单列表
@@ -4054,33 +4083,30 @@ def hot_playlists_by_tag(category, offset):
 
     # 添加分页按钮
     if len(playlists) >= limit:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'hot_playlists_by_tag', category=category, offset=str(offset+limit))})
 
     # 添加"返回分类"按钮
-    items.append({'label': '<< 返回分类', 'path': plugin.url_for('playlist_tags'), 'is_playable': False})
+    items.append({'label': '<< 返回分类', 'path': _url_for('playlist_tags'), 'is_playable': False})
 
     return items
 
 
-@plugin.route('/hot_playlists/<offset>/')
 def hot_playlists(offset):
     offset = int(offset)
     result = music.hot_playlists(offset=offset, limit=limit)
     playlists = result.get('playlists', [])
     items = get_playlists_items(playlists)
     if len(playlists) >= limit:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'hot_playlists', offset=str(offset+limit))})
     return items
 
 
-@plugin.route('/user_playlists/<uid>/')
 def user_playlists(uid):
     return get_playlists_items(music.user_playlist(uid).get("playlist", []))
 
 
-@plugin.route('/playlist/<ptype>/<id>/')
 def playlist(ptype, id):
     resp = music.playlist_detail(id)
     # return get_songs_items([song['id'] for song in songs],sourceId=id)
@@ -4096,7 +4122,7 @@ def playlist(ptype, id):
                 label += tag(' (' + artist + '-' +
                              data['mlogExtVO']['song']['name'] + ')', 'gray')
                 context_menu = [
-                    ('相关歌曲:%s' % (artist + '-' + data['mlogExtVO']['song']['name']), 'RunPlugin(%s)' % plugin.url_for('song_contextmenu', action='play_song', meida_type='song', song_id=str(
+                    ('相关歌曲:%s' % (artist + '-' + data['mlogExtVO']['song']['name']), 'RunPlugin(%s)' % _url_for('song_contextmenu', action='play_song', meida_type='song', song_id=str(
                         data['mlogExtVO']['song']['id']), mv_id=str(data['mlogBaseData']['id']), sourceId=str(id), dt=str(data['mlogExtVO']['song']['duration']//1000))),
                 ]
             else:
@@ -4113,7 +4139,7 @@ def playlist(ptype, id):
 
             items.append({
                 'label': label,
-                'path': plugin.url_for('play', meida_type=meida_type, song_id=str(data['mlogExtVO']['song']['id']), mv_id=str(data['mlogBaseData']['id']), sourceId=str(id), dt='0', source='netease'),
+                'path': _url_for('play', meida_type=meida_type, song_id=str(data['mlogExtVO']['song']['id']), mv_id=str(data['mlogBaseData']['id']), sourceId=str(id), dt='0', source='netease'),
                 'is_playable': True,
                 'icon': data['mlogBaseData']['coverUrl'],
                 'thumbnail': data['mlogBaseData']['coverUrl'],
@@ -4141,7 +4167,6 @@ def playlist(ptype, id):
         return get_songs_items(datas, privileges=privileges, sourceId=id, source='playlist')
 
 
-@plugin.route('/cloud/<offset>/')
 def cloud(offset):
     offset = int(offset)
     result = music.cloud_songlist(offset=offset, limit=limit)
@@ -4149,12 +4174,11 @@ def cloud(offset):
     playlist = result['data']
     items = get_songs_items(playlist, offset=offset)
     if more:
-        items.append({'label': tag('下一页', 'yellow'), 'path': plugin.url_for(
+        items.append({'label': tag('下一页', 'yellow'), 'path': _url_for(
             'cloud', offset=str(offset+limit))})
     return items
 
 
-@plugin.route('/song_comments/<song_id>/<offset>/')
 def song_comments(song_id, offset='0'):
     """获取歌曲评论并显示"""
     xbmc.log(f'[Music Comments] song_id: {song_id}, offset: {offset}', xbmc.LOGDEBUG)
@@ -4172,6 +4196,7 @@ def song_comments(song_id, offset='0'):
     # 保存当前歌曲ID，用于后续分页
     comments_storage = safe_get_storage('comments')
     comments_storage['current_song_id'] = song_id
+    _save_storage('comments', comments_storage)
     xbmc.log(f'[Music Comments] Saved song_id: {song_id}', xbmc.LOGDEBUG)
 
     offset = int(offset)
@@ -4264,7 +4289,7 @@ def song_comments(song_id, offset='0'):
 
             items.append({
                 'label': nickname,
-                'path': plugin.url_for('song_comments', song_id=song_id, offset=str(offset)),
+                'path': _url_for('song_comments', song_id=song_id, offset=str(offset)),
                 'properties': props,
                 'thumbnail': avatar_url,
                 'icon': avatar_url,
@@ -4320,7 +4345,7 @@ def song_comments(song_id, offset='0'):
 
             items.append({
                 'label': nickname,
-                'path': plugin.url_for('song_comments', song_id=song_id, offset=str(offset)),
+                'path': _url_for('song_comments', song_id=song_id, offset=str(offset)),
                 'properties': props,
                 'thumbnail': avatar_url,
                 'icon': avatar_url,
@@ -4367,7 +4392,7 @@ def song_comments(song_id, offset='0'):
         # 如果还有更多评论，添加"加载更多"项
         if current_count < total:
             next_offset = offset + limit
-            next_url = plugin.url_for('load_more_comments', offset=str(next_offset))
+            next_url = _url_for('load_more_comments', offset=str(next_offset))
             # 将下一页URL存到Window Property，供皮肤端Container.Update使用
             xbmcgui.Window(10000).setProperty('bili_comment_next_page', next_url)
             items.append({
@@ -4404,7 +4429,6 @@ def song_comments(song_id, offset='0'):
         return []
 
 
-@plugin.route('/load_more_comments/<offset>/')
 def load_more_comments(offset='0'):
     """加载更多评论（增量加载：先返回已缓存的评论，再追加新评论）"""
     xbmc.log(f'[Music Comments] Loading more comments, offset: {offset}', xbmc.LOGDEBUG)
@@ -4459,7 +4483,6 @@ def load_more_comments(offset='0'):
     return all_items
 
 
-@plugin.route('/trigger_comment_load/')
 def trigger_comment_load():
     """关闭当前评论dialog并用新URL重新打开以加载更多评论"""
     import json
@@ -4483,7 +4506,6 @@ def trigger_comment_load():
     xbmc.log('[Music Comments] Set alarm to reopen dialog', xbmc.LOGDEBUG)
 
 
-@plugin.route('/show_comment_replies/')
 def show_comment_replies():
     """显示评论的回复内容"""
     title = xbmcgui.Window(10000).getProperty('comment_reply_title')
@@ -4555,7 +4577,6 @@ def show_comment_replies():
             return
 
 
-@plugin.route('/comment_replies/<offset>/')
 def comment_replies(offset='0'):
     """返回评论回复的Kodi列表项，支持增量加载（timeCursor游标分页）"""
     import time as _time
@@ -4625,7 +4646,7 @@ def comment_replies(offset='0'):
         except Exception:
             pass
         if has_more:
-            next_url = plugin.url_for('comment_replies', offset=str(offset + limit))
+            next_url = _url_for('comment_replies', offset=str(offset + limit))
             trigger_index = len(items)
             xbmcgui.Window(10000).setProperty('nc_reply_trigger_index', str(trigger_index))
             items.append({
@@ -4642,14 +4663,12 @@ def comment_replies(offset='0'):
     return items
 
 
-@plugin.route('/hot_song_comments/')
 def hot_song_comments():
     """获取当前播放歌曲的热门评论"""
     items = current_song_comments('0')
     return [item for item in items if item.get('properties', {}).get('comment_type') == 'hot']
 
 
-@plugin.route('/latest_song_comments/<offset>/')
 def latest_song_comments(offset='0'):
     """获取当前播放歌曲的最新评论（支持增量加载）"""
     import json as _json
@@ -4670,12 +4689,13 @@ def latest_song_comments(offset='0'):
 
     if trigger_items:
         next_offset = offset_int + 50
-        next_url = plugin.url_for('latest_song_comments', offset=str(next_offset))
+        next_url = _url_for('latest_song_comments', offset=str(next_offset))
         latest_items = [item for item in latest_items if item.get('properties', {}).get('is_comment_trigger') != '1']
         trigger_index = len(latest_items)
         xbmcgui.Window(10000).setProperty('bili_comment_trigger_index', str(trigger_index))
         try:
             comments_storage['latest_cache'] = _json.dumps(latest_items)
+            _save_storage('comments', comments_storage)
         except:
             pass
         latest_items.append({
@@ -4692,6 +4712,7 @@ def latest_song_comments(offset='0'):
     else:
         try:
             comments_storage['latest_cache'] = _json.dumps(latest_items)
+            _save_storage('comments', comments_storage)
         except:
             pass
 
@@ -4699,7 +4720,6 @@ def latest_song_comments(offset='0'):
     return latest_items
 
 
-@plugin.route('/current_song_comments/<offset>/')
 def current_song_comments(offset='0'):
     """获取当前播放歌曲的评论（从URL解析ID）"""
     xbmc.log(f'[Music Comments] Getting current song comments, offset: {offset}', xbmc.LOGDEBUG)
@@ -4733,7 +4753,6 @@ def current_song_comments(offset='0'):
     return song_comments(song_id=song_id, offset=offset)
 
 
-@plugin.route('/debug_song_info/')
 def debug_song_info():
     """调试当前播放歌曲信息"""
     dialog = xbmcgui.Dialog()
@@ -4800,7 +4819,6 @@ def debug_song_info():
     return []
 
 
-@plugin.route('/clear_cache/')
 def clear_cache():
     """清理所有缓存"""
     cache_db = get_cache_db()
@@ -4830,7 +4848,6 @@ def clear_cache():
     return []
 
 
-@plugin.route('/clear_expired_cache/')
 def clear_expired_cache():
     """清理过期缓存"""
     cache_db = get_cache_db()
@@ -4867,7 +4884,6 @@ def clear_expired_cache():
     return []
 
 
-@plugin.route('/preload_cache/')
 def preload_cache():
     """
     缓存预热 - 预加载常用数据
@@ -4888,7 +4904,6 @@ def preload_cache():
     thread.start()
 
 
-@plugin.route('/set_artist_info/<artist_id>/')
 def set_artist_info(artist_id):
     try:
         cache_db = get_cache_db()
@@ -4918,7 +4933,6 @@ def set_artist_info(artist_id):
     return []
 
 
-@plugin.route('/search_and_set_artist_info/')
 def search_and_set_artist_info():
     try:
         artist_name = xbmcgui.Window(10000).getProperty('nc_current_artist_name')
@@ -4947,15 +4961,13 @@ def search_and_set_artist_info():
     return []
 
 
-@plugin.route('/open_album/')
 def open_album():
-    album_path = plugin.request.args.get('path', '')
+    album_path = _params.get('path', '')
     if album_path:
         xbmc.executebuiltin('Dialog.Close(1150,true)')
         xbmc.executebuiltin('ActivateWindow(10502,%s)' % album_path)
 
 
-@plugin.route('/play_album/<album_id>/')
 def play_album(album_id):
     result = music.album(album_id)
     songs = result.get('songs', [])
@@ -5041,5 +5053,364 @@ def preload_cache_async():
         ))
 
 
+def _parse_params():
+    """Parse query string parameters from sys.argv[2]."""
+    params = {}
+    if len(sys.argv) > 2 and sys.argv[2]:
+        qs = sys.argv[2].lstrip('?')
+        for part in qs.split('&'):
+            if '=' in part:
+                k, v = part.split('=', 1)
+                params[unquote_plus(k)] = unquote_plus(v)
+    return params
+
+_params = _parse_params()
+
 if __name__ == '__main__':
-    plugin.run()
+    handle = int(sys.argv[1])
+    base_url = sys.argv[0]
+    path = base_url.split('plugin://%s' % ADDON_ID, 1)[-1]
+    if not path:
+        path = '/'
+    if '?' in path:
+        path = path.split('?', 1)[0]
+    path = unquote_plus(path)
+
+    succeeded = True
+
+    try:
+        if path == '/' or path == '':
+            items = index()
+            add_directory_items(handle, items)
+        elif path == '/delete_thumbnails/':
+            delete_thumbnails()
+        elif path == '/login/':
+            login()
+        elif path == '/logout/':
+            logout()
+        elif path == '/login_sms/':
+            login_sms()
+        elif path.startswith('/to_artist/'):
+            artists = path.split('/to_artist/')[1].rstrip('/')
+            items = to_artist(artists=unquote_plus(artists))
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path.startswith('/song_contextmenu/'):
+            parts = path.split('/song_contextmenu/')[1].rstrip('/').split('/')
+            items = song_contextmenu(action=parts[0], meida_type=parts[1], song_id=parts[2], mv_id=parts[3], sourceId=parts[4], dt=parts[5])
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path.startswith('/play/'):
+            parts = path.split('/play/')[1].rstrip('/').split('/')
+            source = parts[5] if len(parts) > 5 else 'netease'
+            play(meida_type=parts[0], song_id=parts[1], mv_id=parts[2], sourceId=parts[3], dt=parts[4], source=source)
+        elif path == '/playlist_position/':
+            playlist_position()
+        elif path == '/playlist_focus_current/':
+            playlist_focus_current()
+        elif path == '/play_playlist_offset/':
+            play_playlist_offset()
+        elif path == '/history_by_album/':
+            items = history_by_album()
+            add_directory_items(handle, items)
+        elif path == '/history/':
+            items = history()
+            add_directory_items(handle, items)
+        elif path.startswith('/history_filter/'):
+            filter_val = path.split('/history_filter/')[1].rstrip('/')
+            items = history_filter(filter=unquote_plus(filter_val))
+            add_directory_items(handle, items)
+        elif path == '/history_clear/':
+            history_clear()
+        elif path == '/history_play_all/':
+            history_play_all()
+        elif path == '/history_by_artist/':
+            items = history_by_artist()
+            add_directory_items(handle, items)
+        elif path.startswith('/history_group_artist/'):
+            artist = path.split('/history_group_artist/')[1].rstrip('/')
+            items = history_group_artist(artist=unquote_plus(artist))
+            add_directory_items(handle, items)
+        elif path.startswith('/history_group_album/'):
+            album = path.split('/history_group_album/')[1].rstrip('/')
+            items = history_group_album(album=unquote_plus(album))
+            add_directory_items(handle, items)
+        elif path == '/vip_timemachine/':
+            items = vip_timemachine()
+            add_directory_items(handle, items)
+        elif path.startswith('/vip_timemachine_week/'):
+            index = path.split('/vip_timemachine_week/')[1].rstrip('/')
+            items = vip_timemachine_week(index=index)
+            add_directory_items(handle, items)
+        elif path == '/qrcode_login/':
+            qrcode_login()
+        elif path == '/mlog_category/':
+            items = mlog_category()
+            add_directory_items(handle, items)
+        elif path.startswith('/mlog/'):
+            parts = path.split('/mlog/')[1].rstrip('/').split('/')
+            items = mlog(cid=parts[0], pagenum=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/top_mvs/'):
+            offset = path.split('/top_mvs/')[1].rstrip('/')
+            items = top_mvs(offset=offset)
+            add_directory_items(handle, items)
+        elif path == '/new_songs/':
+            items = new_songs()
+            add_directory_items(handle, items)
+        elif path.startswith('/new_albums/'):
+            offset = path.split('/new_albums/')[1].rstrip('/')
+            items = new_albums(offset=offset)
+            add_directory_items(handle, items)
+        elif path == '/toplists/':
+            items = toplists()
+            add_directory_items(handle, items)
+        elif path == '/top_artists/':
+            items = top_artists()
+            add_directory_items(handle, items)
+        elif path == '/recommend_songs/':
+            items = recommend_songs()
+            add_directory_items(handle, items)
+        elif path.startswith('/play_recommend_songs/'):
+            parts = path.split('/play_recommend_songs/')[1].rstrip('/').split('/')
+            items = play_recommend_songs(song_id=parts[0], mv_id=parts[1], dt=parts[2])
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path.startswith('/play_playlist_songs/'):
+            parts = path.split('/play_playlist_songs/')[1].rstrip('/').split('/')
+            items = play_playlist_songs(playlist_id=parts[0], song_id=parts[1], mv_id=parts[2], dt=parts[3])
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path.startswith('/history_recommend_songs/'):
+            date = path.split('/history_recommend_songs/')[1].rstrip('/')
+            items = history_recommend_songs(date=unquote_plus(date))
+            add_directory_items(handle, items)
+        elif path.startswith('/albums/'):
+            parts = path.split('/albums/')[1].rstrip('/').split('/')
+            items = albums(artist_id=parts[0], offset=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/album/'):
+            id_val = path.split('/album/')[1].rstrip('/')
+            items = album(id=id_val)
+            add_directory_items(handle, items)
+        elif path.startswith('/artist/'):
+            id_val = path.split('/artist/')[1].rstrip('/')
+            items = artist(id=id_val)
+            add_directory_items(handle, items)
+        elif path.startswith('/similar_artist/'):
+            parts = path.split('/similar_artist/')[1].rstrip('/').split('/')
+            items = similar_artist(id=parts[0], offset=parts[1] if len(parts) > 1 else 0)
+            add_directory_items(handle, items)
+        elif path.startswith('/artist_mvs/'):
+            parts = path.split('/artist_mvs/')[1].rstrip('/').split('/')
+            items = artist_mvs(id=parts[0], offset=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/hot_songs/'):
+            id_val = path.split('/hot_songs/')[1].rstrip('/')
+            items = hot_songs(id=id_val)
+            add_directory_items(handle, items)
+        elif path.startswith('/artist_songs/'):
+            parts = path.split('/artist_songs/')[1].rstrip('/').split('/')
+            items = artist_songs(id=parts[0], offset=parts[1])
+            add_directory_items(handle, items)
+        elif path == '/sublist/':
+            items = sublist()
+            add_directory_items(handle, items)
+        elif path.startswith('/song_purchased/'):
+            offset = path.split('/song_purchased/')[1].rstrip('/')
+            items = song_purchased(offset=offset)
+            add_directory_items(handle, items)
+        elif path.startswith('/dj_sublist/'):
+            offset = path.split('/dj_sublist/')[1].rstrip('/')
+            items = dj_sublist(offset=offset)
+            add_directory_items(handle, items)
+        elif path.startswith('/djlist/'):
+            parts = path.split('/djlist/')[1].rstrip('/').split('/')
+            items = djlist(id=parts[0], offset=parts[1])
+            add_directory_items(handle, items)
+        elif path == '/digitalAlbum_purchased/':
+            items = digitalAlbum_purchased()
+            add_directory_items(handle, items)
+        elif path.startswith('/playlist_contextmenu/'):
+            parts = path.split('/playlist_contextmenu/')[1].rstrip('/').split('/')
+            items = playlist_contextmenu(action=parts[0], id=parts[1])
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/video_sublist/':
+            items = video_sublist()
+            add_directory_items(handle, items)
+        elif path == '/album_sublist/':
+            items = album_sublist()
+            add_directory_items(handle, items)
+        elif path.startswith('/follow_user/'):
+            parts = path.split('/follow_user/')[1].rstrip('/').split('/')
+            follow_user(type=parts[0], id=parts[1])
+        elif path.startswith('/user/'):
+            id_val = path.split('/user/')[1].rstrip('/')
+            items = user(id=id_val)
+            add_directory_items(handle, items)
+        elif path == '/history_recommend_dates/':
+            items = history_recommend_dates()
+            add_directory_items(handle, items)
+        elif path.startswith('/play_record/'):
+            uid = path.split('/play_record/')[1].rstrip('/')
+            items = play_record(uid=uid)
+            add_directory_items(handle, items)
+        elif path.startswith('/show_play_record/'):
+            parts = path.split('/show_play_record/')[1].rstrip('/').split('/')
+            items = show_play_record(uid=parts[0], type=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/user_getfolloweds/'):
+            parts = path.split('/user_getfolloweds/')[1].rstrip('/').split('/')
+            items = user_getfolloweds(uid=parts[0], offset=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/user_getfollows/'):
+            parts = path.split('/user_getfollows/')[1].rstrip('/').split('/')
+            items = user_getfollows(uid=parts[0], offset=parts[1])
+            add_directory_items(handle, items)
+        elif path == '/artist_sublist/':
+            items = artist_sublist()
+            add_directory_items(handle, items)
+        elif path == '/search/':
+            items = search()
+            add_directory_items(handle, items)
+        elif path.startswith('/sea/'):
+            type_val = path.split('/sea/')[1].rstrip('/')
+            items = sea(type=type_val)
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/personal_fm/':
+            items = personal_fm()
+            add_directory_items(handle, items)
+        elif path == '/tunehub_search/':
+            items = tunehub_search()
+            add_directory_items(handle, items)
+        elif path.startswith('/tunehub_search_platform/'):
+            source = path.split('/tunehub_search_platform/')[1].rstrip('/')
+            items = tunehub_search_platform(source=source)
+            add_directory_items(handle, items)
+        elif path == '/tunehub_aggregate_search/':
+            items = tunehub_aggregate_search()
+            add_directory_items(handle, items)
+        elif path == '/tunehub_playlist/':
+            items = tunehub_playlist()
+            add_directory_items(handle, items)
+        elif path.startswith('/tunehub_playlist_platform/'):
+            source = path.split('/tunehub_playlist_platform/')[1].rstrip('/')
+            items = tunehub_playlist_platform(source=source)
+            add_directory_items(handle, items)
+        elif path == '/tunehub_toplists/':
+            items = tunehub_toplists()
+            add_directory_items(handle, items)
+        elif path.startswith('/tunehub_toplists_platform/'):
+            source = path.split('/tunehub_toplists_platform/')[1].rstrip('/')
+            items = tunehub_toplists_platform(source=source)
+            add_directory_items(handle, items)
+        elif path.startswith('/favorite_toggle/'):
+            parts = path.split('/favorite_toggle/')[1].rstrip('/').split('/')
+            items = favorite_toggle(source=parts[0], id=parts[1], name=unquote_plus(parts[2]), artist=unquote_plus(parts[3]))
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/favorites/':
+            items = favorites()
+            add_directory_items(handle, items)
+        elif path.startswith('/tunehub_toplist/'):
+            parts = path.split('/tunehub_toplist/')[1].rstrip('/').split('/')
+            items = tunehub_toplist(source=parts[0], id=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/tunehub_play/'):
+            parts = path.split('/tunehub_play/')[1].rstrip('/').split('/')
+            items = tunehub_play(source=parts[0], id=parts[1], br=parts[2] if len(parts) > 2 else '320k')
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/recommend_playlists/':
+            items = recommend_playlists()
+            add_directory_items(handle, items)
+        elif path == '/playlist_tags/':
+            items = playlist_tags()
+            add_directory_items(handle, items)
+        elif path.startswith('/hot_playlists_by_tag/'):
+            parts = path.split('/hot_playlists_by_tag/')[1].rstrip('/').split('/')
+            items = hot_playlists_by_tag(category=unquote_plus(parts[0]), offset=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/hot_playlists/'):
+            offset = path.split('/hot_playlists/')[1].rstrip('/')
+            items = hot_playlists(offset=offset)
+            add_directory_items(handle, items)
+        elif path.startswith('/user_playlists/'):
+            uid = path.split('/user_playlists/')[1].rstrip('/')
+            items = user_playlists(uid=uid)
+            add_directory_items(handle, items)
+        elif path.startswith('/playlist/'):
+            parts = path.split('/playlist/')[1].rstrip('/').split('/')
+            items = playlist(ptype=parts[0], id=parts[1])
+            add_directory_items(handle, items)
+        elif path.startswith('/cloud/'):
+            offset = path.split('/cloud/')[1].rstrip('/')
+            items = cloud(offset=offset)
+            add_directory_items(handle, items)
+        elif path.startswith('/song_comments/'):
+            parts = path.split('/song_comments/')[1].rstrip('/').split('/')
+            items = song_comments(song_id=parts[0], offset=parts[1] if len(parts) > 1 else '0')
+            add_directory_items(handle, items)
+        elif path.startswith('/load_more_comments/'):
+            offset = path.split('/load_more_comments/')[1].rstrip('/')
+            items = load_more_comments(offset=offset)
+            add_directory_items(handle, items)
+        elif path == '/trigger_comment_load/':
+            trigger_comment_load()
+        elif path == '/show_comment_replies/':
+            show_comment_replies()
+        elif path.startswith('/comment_replies/'):
+            offset = path.split('/comment_replies/')[1].rstrip('/')
+            items = comment_replies(offset=offset)
+            add_directory_items(handle, items)
+        elif path == '/hot_song_comments/':
+            items = hot_song_comments()
+            add_directory_items(handle, items)
+        elif path.startswith('/latest_song_comments/'):
+            offset = path.split('/latest_song_comments/')[1].rstrip('/')
+            items = latest_song_comments(offset=offset)
+            add_directory_items(handle, items)
+        elif path.startswith('/current_song_comments/'):
+            offset = path.split('/current_song_comments/')[1].rstrip('/')
+            items = current_song_comments(offset=offset)
+            add_directory_items(handle, items)
+        elif path == '/debug_song_info/':
+            items = debug_song_info()
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/clear_cache/':
+            items = clear_cache()
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/clear_expired_cache/':
+            items = clear_expired_cache()
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/preload_cache/':
+            preload_cache()
+        elif path.startswith('/set_artist_info/'):
+            artist_id = path.split('/set_artist_info/')[1].rstrip('/')
+            items = set_artist_info(artist_id=artist_id)
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/search_and_set_artist_info/':
+            items = search_and_set_artist_info()
+            if isinstance(items, list):
+                add_directory_items(handle, items)
+        elif path == '/open_album/':
+            open_album()
+        elif path.startswith('/play_album/'):
+            album_id = path.split('/play_album/')[1].rstrip('/')
+            play_album(album_id=album_id)
+        else:
+            xbmc.log('[plugin.audio.music] Unhandled path: %s' % path, xbmc.LOGWARNING)
+            succeeded = False
+    except Exception as e:
+        xbmc.log('[plugin.audio.music] Route dispatch error: %s' % str(e), xbmc.LOGERROR)
+        import traceback
+        xbmc.log('[plugin.audio.music] Traceback: %s' % traceback.format_exc(), xbmc.LOGERROR)
+        succeeded = False
+
+    xbmcplugin.endOfDirectory(handle, succeeded)
